@@ -1,0 +1,62 @@
+package dev.rain.laundry.core
+
+import kotlinx.coroutines.*
+import kotlinx.coroutines.test.runTest
+import org.junit.Assert.*
+import org.junit.Test
+
+class OrderWorkflowTest {
+    private val device = Device("g1", "测试机", "1234", "WASH", "s1", "o1", 0, emptyList())
+    private val mode = WashMode("s1", "标准洗", "4.00")
+    private val accepted = Quote(device, mode, "4.00", "[]", 1)
+    private val location = LocationFix(30.2, 120.1)
+    private class Fake(var response: Quote) : PurchaseGateway {
+        var creates = 0; var failure: Exception? = null
+        override suspend fun quote(device: Device, mode: WashMode) = response
+        override suspend fun create(quote: Quote, fix: LocationFix): CreatedOrder {
+            creates++; delay(10); failure?.let { throw it }; return CreatedOrder("id1", "trade1")
+        }
+    }
+    @Test fun priceChangeDoesNotCreateOrPersistAnOrder() = runTest {
+        val fake = Fake(accepted.copy(amount = "5.00")); var saved: LocalOrder? = null
+        val flow = OrderWorkflow(fake, { saved }, { saved = it })
+        assertTrue(runCatching { flow.create(accepted, PayMethod.ALIPAY, location, "owner") }.exceptionOrNull() is QuoteChanged)
+        assertNull(saved); assertEquals(0, fake.creates)
+    }
+    @Test fun concurrentTapsCreateAtMostOneOrder() = runTest {
+        val fake = Fake(accepted); var saved: LocalOrder? = null
+        val flow = OrderWorkflow(fake, { saved }, { saved = it })
+        val jobs = (1..2).map { async { runCatching { flow.create(accepted, PayMethod.ALIPAY, location, "owner") } } }
+        val results = jobs.awaitAll()
+        assertEquals(1, fake.creates); assertEquals(1, results.count { it.isSuccess })
+        assertEquals(OrderPhase.CREATED, saved?.phase)
+    }
+    @Test fun requestFailurePersistsUnconfirmedAndBlocksRetryAfterRestart() = runTest {
+        val fake = Fake(accepted).apply { failure = ClientError("network lost") }; var saved: LocalOrder? = null
+        val phases = mutableListOf<OrderPhase>()
+        val save: (LocalOrder) -> Unit = { saved = it; phases.add(it.phase) }
+        runCatching { OrderWorkflow(fake, { saved }, save).create(accepted, PayMethod.ALIPAY, location, "owner") }
+        assertEquals(listOf(OrderPhase.CREATING, OrderPhase.UNCONFIRMED), phases)
+        val retry = runCatching { OrderWorkflow(fake, { saved }, save).create(accepted, PayMethod.ALIPAY, location, "owner") }
+        assertTrue(retry.isFailure); assertEquals(1, fake.creates)
+    }
+    @Test fun cancellationAlsoPreservesAnUnconfirmedAttempt() = runTest {
+        val fake = Fake(accepted).apply { failure = CancellationException() }; var saved: LocalOrder? = null
+        runCatching { OrderWorkflow(fake, { saved }, { saved = it }).create(accepted, PayMethod.BALANCE, location, "owner") }
+        assertEquals(OrderPhase.UNCONFIRMED, saved?.phase)
+    }
+    @Test fun explicitRejectionDoesNotPermanentlyLockNewOrders() = runTest {
+        val fake = Fake(accepted).apply { failure = BusinessRejected(4001, "设备不可用") }; var saved: LocalOrder? = null
+        val flow = OrderWorkflow(fake, { saved }, { saved = it })
+        assertTrue(runCatching { flow.create(accepted, PayMethod.ALIPAY, location, "owner") }.exceptionOrNull() is BusinessRejected)
+        assertEquals(OrderPhase.REJECTED, saved?.phase)
+        fake.failure = null
+        val created = flow.create(accepted, PayMethod.ALIPAY, location, "owner")
+        assertEquals(OrderPhase.CREATED, created.phase); assertEquals(2, fake.creates)
+    }
+    @Test fun paymentRouteSurvivesOrderPersistence() = runTest {
+        val fake = Fake(accepted); var saved: LocalOrder? = null
+        val result = OrderWorkflow(fake, { saved }, { saved = it }).create(accepted, PayMethod.ALIPAY, location, "owner", PayRoute(PayMethod.ALIPAY, "route-1", "voucher-1"))
+        assertEquals("route-1", result.thirdChannel); assertEquals("voucher-1", saved?.outVoucherId)
+    }
+}

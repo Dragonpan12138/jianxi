@@ -1,2 +1,101 @@
-# jianxi
-简洗 · Kotlin / Jetpack Compose Android 洗衣客户端，支持短信登录、扫码、单次支付、订单查询与液态玻璃底栏。MIT 开源。
+# 简洗 Jianxi
+
+简洗是一个使用 Kotlin、Jetpack Compose 和 Material 3 构建的独立 Android 洗衣客户端，提供短信登录、扫码识别设备、模式选择、单次支付和本机订单查询，配有液态玻璃悬浮底栏和系统深色模式。
+
+[GitHub 源码](https://github.com/xiyuchengxu/jianxi) · [问题反馈](https://github.com/xiyuchengxu/jianxi/issues) · [MIT 开源协议](LICENSE)
+
+当前版本 **0.1.3**，支持 Android 8.0（API 26）及以上系统。包名 `dev.rain.laundry`，可与原版并存，并可覆盖安装此前测试版。本项目与原服务平台无隶属关系。
+
+## 0.1.3 关于与开源
+
+顶部信息按钮可打开“关于简洗”，登录前后均可访问。页面展示应用版本、可直接打开的 GitHub 仓库地址、MIT 开源协议和第三方组件说明。MIT 全文随 APK 打包，可离线阅读和选择复制。
+
+项目源码使用 [MIT License](LICENSE)，第三方组件使用各自许可，见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+
+## 0.1.2 底栏与录屏动效
+
+底栏可见轨道缩为最多 252dp 宽、60dp 高，图标缩为 20dp。参考用户提供的录屏，按住时弹出鼓起的玻璃透镜，拖动时随手指移动并拉伸，松手后落到选中的标签并回弹。拖出底栏较远会取消本次切换。后台请求忙碌时禁用切换，并保留无障碍点击。
+
+透镜单独采样页面和底栏场景，能放大下方的图标及文字，边缘使用折射位移、RGB 色散和高光。Android 13 及以上使用 AGSL；Android 12 使用背景模糊及拖动放大回退；更早版本保留半透明和拖动放大。轨道外预留了透镜鼓起所需的空间。细节见 `GLASS_UI_NOTES.md`。
+
+## 0.1.1 修正
+
+登录验证码入口已按原版登录页面改为 `common/sms/sendCode`，表单为 `phone`、`template=reg`。0.1.0 错用了 `user/smsCode`，会出现未登录提示。登录前请求使用空会话签名，不夹带残留 token。
+
+同时核对了洗衣流程：模式进入报价前增加 `appoint/checkMachineCanUse` 检查；使用详情接口的正式设备编号及 IMEI；只进入支持的洗衣/洗鞋设备流程；保留支付路由的 `thirdChannel`、`outVoucherId`；区分明确拒单、会话过期、访问受限和结果未知。明确拒单可以重新确认下单，网络导致的未知结果仍阻止自动重试。具体证据与未验证部分见 `PROTOCOL_AUDIT.md`。
+
+使用 Kotlin、Jetpack Compose、Material 3。界面采用浅绿色和系统深色模式；底栏为悬浮液态玻璃风格，静止时标签保持清晰，按压时由独立透镜对底栏内容做局部放大和光学效果。
+
+## 当前功能
+
+- 本人已有账户的手机号、短信验证码登录，发送验证码的 60 秒冷却。
+- 本机相机扫描二维码，或粘贴二维码内容；识别 `IMEI`、`SN`、`NQT`。
+- 查询设备、选择模式、向后端查询报价、展示本次洗衣项目及金额。
+- 使用后端提供的支付宝单次付款或账户余额渠道；不支持微信支付、会员和周期扣款。
+- 本机最近一笔订单的保存、继续付款、查询结果、取消未付款订单，以及已付款后的设备同步请求。
+- token 和本机订单通过 Android Keystore 的 AES-GCM 加密保存；登出后同一手机号可找回本机保留的订单。
+
+这是根据提供的胖乖生活 1.144.0 APK 静态协议实现的**待实机联调版本**。尚无学校真实二维码与本人账户联调结果，不能把编译成功或单元测试通过当作真实洗衣、支付成功的证明。服务端风控、二维码类型、模式响应结构、新包名与支付签名兼容性仍待确认。
+
+## 使用
+
+安装测试 APK，使用本人手机号登录，再扫描洗衣机二维码或粘贴完整内容。在付款页核对设备、模式和金额，明确点击“确认支付”后才会创建订单。定位权限只在付款前申请，用于原协议下单所需的位置参数；相机权限由本机扫码功能申请。
+
+如果二维码或响应结构尚未适配，客户端会停止该步骤并显示错误，不会使用演示数据替代真实设备。请保留二维码原始内容供后续联调，不要分享短信验证码和登录 token。
+
+## 订单处理
+
+- 报价只接受一个已选择的洗衣项目；出现额外商品或未选择的营销组合时停止下单。
+- 在创建前再次向后端核对报价。金额或项目变动时需要重新确认。
+- 创建订单前先保存本地尝试记录。创建请求不自动重试；网络中断导致结果不明时保留“下单结果待确认”，阻止继续创建第二笔订单。服务端明确拒绝下单时显示“下单未成功”，允许重新选择和确认。
+- 已知订单的支付宝继续付款复用原订单号。余额扣款请求发出后若结果不明，只查询状态，不重复扣款。
+- SDK 返回 `9000` 不直接当作已付款，最终状态以 `order/pay_status` 的布尔结果为准。
+- 设备同步请求和“机器已经启动”是不同状态，界面不会把请求发送成功当作已经启动。
+- 取消订单先查询是否付款；仅在后端成功确认取消后解除本地未完成订单限制。
+- 如果创建请求结果不明且没有拿到订单号，当前版本需要先在原应用核对订单。此版本没有猜测订单号或自行解除这项限制的入口。
+
+## 构建
+
+需要 JDK 17 或 21、Android SDK 35、Build Tools 35.0.0。通过 Android Studio 打开本目录即可；首次构建需要访问 Google Maven 和 Maven Central。
+
+```sh
+./gradlew :app:assembleDebug :app:testDebugUnitTest :app:lintDebug
+```
+
+Windows 使用 `gradlew.bat`。测试 APK 位于 `app/build/outputs/apk/debug/app-debug.apk`。源码包不含 Android SDK、构建缓存、账号数据或个人发布密钥。`development-debug.p12` 是随本项目公开提供的开发测试签名，密码为 `android`，用于后续测试版本覆盖升级；它不是正式发布签名，正式发布签名尚未配置。
+
+## 协议来源与实现范围
+
+`core/WireProtocol` 实现样本的请求头签名及下单风控签名。协议版本固定为样本的 `1.144.0`，独立客户端版本由 `app/build.gradle.kts` 中的 `versionName` 定义，两者不应混用。签名中的常量来自样本的公开客户端代码，不是账户密码或服务端私钥。
+
+`data/LaundryApi` 仅允许明确列出的必要业务路径，正式主机固定为 `https://userapi.qiekj.com/`。没有关闭 TLS 校验，也不自动跟随业务接口重定向。只有单元测试可向本机 MockWebServer 发请求。
+
+模式数据尚待真实设备验证，目前显式支持返回数组，以及 `skus`、`skuList`、`list` 包装的数组。未知结构直接提示尚未适配。普通洗衣以外的先享后付、免密签约、蓝牙设备、自动续费、会员优惠组合及附加商品不在本版本范围内。已存在的支付平台扣款授权不会因安装本客户端而自动解除。
+
+## 验证记录
+
+见随源码提供的 `VALIDATION.md`，记录本次实际运行的编译与检查结果。本轮开发没有使用真实手机号、验证码、学校设备或订单，也没有向原业务服务器发送联调请求。网络自动化测试使用本机假响应。
+
+## 主要文件
+
+| 文件 | 用途 |
+|---|---|
+| `MainActivity.kt` | 扫码、定位授权、支付宝 SDK 拉起 |
+| `LaundryViewModel.kt` | 页面状态与登录、下单、订单恢复 |
+| `ui/LaundryApp.kt` | Material 3 页面 |
+| `ui/AboutScreen.kt` | 关于页面、GitHub 入口及离线 MIT 全文 |
+| `ui/GlassNavigationBar.kt` | 小尺寸底栏、拖动手势、放大透镜及回弹 |
+| `ui/GlassLensEffect.kt` | AGSL 边缘折射及 RGB 色散 |
+| `core/Protocol.kt` | 二维码、签名、报价和支付参数核对 |
+| `core/OrderWorkflow.kt` | 防重复下单及未知结果持久化 |
+| `data/SessionVault.kt` | Android Keystore 加密会话及订单 |
+| `data/LaundryApi.kt` | 限定业务范围的网络接口 |
+
+## 依赖与文档
+
+Material 3/Compose、AndroidX、OkHttp、Gson、ZXing Embedded 和支付宝 Android SDK 为第三方组件，使用其各自的许可。此工程不包含原版应用的图标、广告组件或整包反编译源码。
+
+- [Compose 官方配置说明](https://developer.android.com/develop/ui/compose/setup-compose-dependencies-and-compiler)
+- [Compose GraphicsLayer 官方说明](https://developer.android.com/develop/ui/compose/graphics/draw/modifiers)
+- [ZXing Android Embedded](https://github.com/journeyapps/zxing-android-embedded)
+- [支付宝 SDK Maven 坐标](https://central.sonatype.com/artifact/com.alipay.sdk/alipaysdk-android)

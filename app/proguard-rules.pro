@@ -1,0 +1,3 @@
+-keep class com.alipay.** { *; }
+-keep class com.google.gson.reflect.TypeToken { *; }
+-keepattributes Signature,InnerClasses,EnclosingMethod

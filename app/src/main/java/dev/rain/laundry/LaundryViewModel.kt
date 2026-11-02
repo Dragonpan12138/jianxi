@@ -1,0 +1,162 @@
+package dev.rain.laundry
+
+import android.app.Application
+import android.os.Build
+import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.viewModelScope
+import dev.rain.laundry.core.*
+import dev.rain.laundry.data.*
+import kotlinx.coroutines.*
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.*
+
+enum class Page { HOME, DEVICE, CHECKOUT, ORDERS }
+data class UiState(
+    val loggedIn: Boolean = false, val phoneLabel: String = "", val page: Page = Page.HOME,
+    val busy: Boolean = false, val progress: String = "", val message: String? = null,
+    val smsCooldown: Int = 0, val smsPhone: String = "", val device: Device? = null,
+    val mode: WashMode? = null, val quote: Quote? = null, val methods: List<PayRoute> = emptyList(),
+    val payMethod: PayRoute? = null, val order: LocalOrder? = null
+)
+data class PaymentLaunch(val orderNo: String, val payload: String)
+
+class LaundryViewModel(application: Application) : AndroidViewModel(application) {
+    private val vault = SessionVault(application)
+    private val api = LaundryApi(vault::token, Build.MANUFACTURER)
+    private val location = LocationProvider(application)
+    private val _state = MutableStateFlow(UiState(loggedIn = vault.token().isNotEmpty(), phoneLabel = vault.phoneLabel(),
+        order = vault.order()?.let { if (it.phase == OrderPhase.CREATING) it.copy(phase = OrderPhase.UNCONFIRMED) else it }))
+    val state = _state.asStateFlow()
+    private val launchChannel = Channel<PaymentLaunch>(Channel.BUFFERED)
+    private var smsJob: Job? = null
+    val paymentLaunches = launchChannel.receiveAsFlow()
+    private val workflow = OrderWorkflow(api, { _state.value.order }, ::saveOrder)
+    private fun saveOrder(order: LocalOrder) { vault.saveOrder(order); _state.update { it.copy(order = order) } }
+    fun clearMessage() { _state.update { it.copy(message = null) } }
+    fun notice(message: String) { _state.update { it.copy(message = message) } }
+    fun navigate(page: Page) { if (!state.value.busy) _state.update { it.copy(page = page) } }
+    fun selectMode(mode: WashMode) { if (!state.value.busy) _state.update { it.copy(mode = mode, quote = null) } }
+    fun selectPayment(method: PayRoute) { if (!state.value.busy && method in state.value.methods) _state.update { it.copy(payMethod = method) } }
+
+    private fun work(progress: String, task: suspend () -> Unit) {
+        if (state.value.busy) return
+        _state.update { it.copy(busy = true, progress = progress) }
+        viewModelScope.launch {
+            try { task() }
+            catch (e: CancellationException) { throw e }
+            catch (_: SessionExpired) { vault.logout(); _state.update { UiState(message = "登录已过期，请重新登录") } }
+            catch (e: QuoteChanged) { _state.update { it.copy(quote = e.quote, message = "价格已更新，请重新确认", page = Page.CHECKOUT) } }
+            catch (e: Exception) { notice(if (e is ClientError) e.message.orEmpty() else "暂时无法处理这份数据，请稍后重试") }
+            finally { _state.update { it.copy(busy = false, progress = "") } }
+        }
+    }
+    fun sendCode(phone: String) {
+        if (!phone.matches(Regex("1[3-9]\\d{9}"))) { notice("请输入正确的手机号"); return }
+        if (state.value.smsCooldown > 0) return
+        work("正在发送验证码") {
+            api.sendCode(phone)
+            _state.update { it.copy(smsPhone = phone, smsCooldown = 60, message = "验证码已发送") }
+            smsJob?.cancel()
+            smsJob = viewModelScope.launch { repeat(60) { delay(1000); _state.update { it.copy(smsCooldown = (it.smsCooldown - 1).coerceAtLeast(0)) } } }
+        }
+    }
+    fun login(phone: String, code: String) {
+        if (!phone.matches(Regex("1[3-9]\\d{9}")) || !code.matches(Regex("\\d{4,8}"))) { notice("请填写手机号和短信验证码"); return }
+        work("正在登录") {
+            val token = api.login(phone, code)
+            vault.login(phone, token)
+            smsJob?.cancel()
+            _state.update { UiState(loggedIn = true, phoneLabel = vault.phoneLabel(), order = vault.order()) }
+        }
+    }
+    fun logout() { if (!state.value.busy) { smsJob?.cancel(); vault.logout(); _state.value = UiState() } }
+    fun scan(raw: String) {
+        work("正在识别洗衣机") {
+            val device = api.device(DeviceCodes.parse(raw))
+            _state.update { it.copy(device = device, mode = device.modes.firstOrNull(), quote = null, page = Page.DEVICE) }
+        }
+    }
+    fun preview() {
+        val device = state.value.device ?: return; val mode = state.value.mode ?: return
+        work("正在确认价格") {
+            val quote = api.quote(device, mode)
+            val methods = api.channels(quote)
+            _state.update { it.copy(quote = quote, methods = methods, payMethod = methods.first(), page = Page.CHECKOUT) }
+        }
+    }
+    fun pay() {
+        val quote = state.value.quote ?: return; val method = state.value.payMethod ?: return
+        if (!location.permitted()) { notice("付款前需要定位，用于确认设备所在位置"); return }
+        work("正在核对订单") {
+            val fix = location.current()
+            val order = try { workflow.create(quote, method.method, fix, vault.owner(), route = method) }
+            catch (e: Exception) { if (state.value.order?.phase == OrderPhase.UNCONFIRMED) _state.update { it.copy(page = Page.ORDERS) }; throw e }
+            _state.update { it.copy(page = Page.ORDERS) }
+            if (api.paid(order)) confirmPaid(order) else payExisting(order)
+        }
+    }
+    fun resumePayment() {
+        val order = state.value.order ?: return
+        if (order.orderNo.isEmpty() || order.phase.finished) return
+        work("正在核对付款状态") {
+            if (api.paid(order)) { confirmPaid(order); return@work }
+            if (order.payMethod == PayMethod.BALANCE && order.phase == OrderPhase.PAYMENT_PENDING) {
+                notice("余额付款结果尚未确认，请稍后刷新订单"); return@work
+            }
+            payExisting(order)
+        }
+    }
+    private suspend fun payExisting(order: LocalOrder) {
+        if (order.payMethod == PayMethod.BALANCE) {
+            val pending = order.copy(phase = OrderPhase.PAYMENT_PENDING); saveOrder(pending)
+            api.balancePay(pending)
+            poll(pending)
+        } else {
+            val payload = api.prepay(order)
+            PurchaseRules.verifyAlipay(payload, order.amount)
+            saveOrder(order.copy(phase = OrderPhase.PAYMENT_PENDING))
+            launchChannel.send(PaymentLaunch(order.orderNo, payload))
+        }
+    }
+    fun sdkReturned(orderNo: String, sdkStatus: String?) {
+        viewModelScope.launch {
+            state.first { !it.busy }
+            val order = state.value.order?.takeIf { it.orderNo == orderNo && it.phase != OrderPhase.CANCELLED } ?: return@launch
+            work("正在查询付款结果") {
+                if (sdkStatus == "6001") notice("付款已取消，可在订单中继续付款")
+                poll(order)
+            }
+        }
+    }
+    fun cancelOrder() {
+        val order = state.value.order ?: return
+        if (order.orderId.isBlank() || order.phase in setOf(OrderPhase.PAID, OrderPhase.CANCELLED)) return
+        work("正在取消订单") {
+            if (api.paid(order)) { confirmPaid(order); return@work }
+            api.cancel(order)
+            saveOrder(order.copy(phase = OrderPhase.CANCELLED))
+            notice("订单已取消")
+        }
+    }
+    fun refreshOrder() {
+        val order = state.value.order ?: return
+        if (order.orderNo.isBlank()) { notice("上一次下单结果未确认，请先在原应用核对订单"); return }
+        work("正在查询订单") { if (api.paid(order)) confirmPaid(order) else notice("尚未确认付款，可稍后再次查询") }
+    }
+    private suspend fun poll(order: LocalOrder) {
+        repeat(5) { index ->
+            if (api.paid(order)) { confirmPaid(order); return }
+            if (index < 4) delay(2000)
+        }
+        notice("付款结果仍在确认，请稍后刷新订单")
+    }
+    private suspend fun confirmPaid(order: LocalOrder) {
+        val paid = order.copy(phase = OrderPhase.PAID)
+        saveOrder(paid)
+        if (!paid.syncRequested) {
+            saveOrder(paid.copy(syncRequested = true))
+            try { api.sync(paid); notice("付款已确认，已请求同步设备，请查看机器是否启动") }
+            catch (_: Exception) { notice("付款已确认；设备同步结果待核实，请查看洗衣机") }
+        } else notice("付款已确认，请查看洗衣机运行状态")
+    }
+}
