@@ -1,6 +1,7 @@
 package dev.rain.laundry.data
 
 import dev.rain.laundry.core.*
+import com.google.gson.JsonParser
 import kotlinx.coroutines.test.runTest
 import okhttp3.mockwebserver.*
 import org.junit.After
@@ -8,6 +9,7 @@ import org.junit.Assert.*
 import org.junit.Before
 import org.junit.Test
 import java.net.InetAddress
+import java.net.URLDecoder
 
 class LaundryApiTest {
     private lateinit var server: MockWebServer
@@ -53,7 +55,9 @@ class LaundryApiTest {
         val device = Device("g1", "test", "1234", "WASH", "shop", "org", 0, emptyList())
         api.create(Quote(device, WashMode("s1", "wash", "4.00"), "4.00", "[]", 1), LocationFix(30.2, 120.1))
         val request = server.takeRequest(); val body = request.body.readUtf8()
-        assertTrue(body.contains("promotions=%5B%5D"))
+        val promotions = body.split('&').first { it.startsWith("promotions=") }.substringAfter('=')
+            .let { JsonParser.parseString(URLDecoder.decode(it, "UTF-8")) }
+        assertEquals(JsonParser.parseString("""[{"promotionId":"0","promotionType":"4","assetId":"0","oldPromotionId":"3482","orgId":"org"}]"""), promotions)
         assertFalse(body.contains("valueCouponPackChecked")); assertFalse(body.contains("suishoubuItems"))
         assertEquals("30.2", request.getHeader("lat")); assertNotNull(request.getHeader("orderRiskSign"))
     }
@@ -64,7 +68,38 @@ class LaundryApiTest {
         val availability = server.takeRequest()
         assertEquals("/appoint/checkMachineCanUse", availability.path)
         assertTrue(availability.body.readUtf8().contains("skuId=s"))
-        assertTrue(server.takeRequest().body.readUtf8().contains("isAutoSelectPromotion=false"))
+        assertTrue(server.takeRequest().body.readUtf8().contains("isAutoSelectPromotion=0"))
+    }
+    @Test fun previewUsesOriginalNumericSelectionFlagAndExcludedPromotion() = runTest {
+        // Contract from OrderPayPreviewAct.orderPre and OrderPayPreviewVm.orderPreview, APK 1.144.0.
+        val excluded = JsonParser.parseString("""[{"promotionId":"0","promotionType":"4","assetId":"0","oldPromotionId":"3482","orgId":"test-org"}]""")
+        server.dispatcher = object : okhttp3.mockwebserver.Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse {
+                if (request.path == "/appoint/checkMachineCanUse") {
+                    return MockResponse().setBody("""{"code":0,"data":true}""")
+                }
+                val fields = request.body.clone().readUtf8().split('&').associate {
+                    URLDecoder.decode(it.substringBefore('='), "UTF-8") to URLDecoder.decode(it.substringAfter('='), "UTF-8")
+                }
+                val compatible = fields["isAutoSelectPromotion"] == "0" && fields["promotions"] == "[]" &&
+                    fields["forbiddenPromotions"]?.let { JsonParser.parseString(it) == excluded } == true
+                return MockResponse().setBody(if (compatible)
+                    """{"code":0,"data":{"realPrice":"4.00","items":[{"goodsId":"g","skuId":"s","amount":"1"}],"promotions":[]}}"""
+                else """{"code":1,"msg":"参数不正确","data":null}""")
+            }
+        }
+        val quote = api.quote(Device("g", "test", "1234", "00", "shop", "test-org", 0, emptyList()), WashMode("s", "wash", "4"))
+        assertEquals("4.00", quote.amount)
+        assertEquals(2, server.requestCount)
+    }
+    @Test fun previewOmitsOrgSpecificExclusionWhenNoOrgWasReturned() = runTest {
+        server.enqueue(MockResponse().setBody("""{"code":0,"data":true}"""))
+        server.enqueue(MockResponse().setBody("""{"code":0,"data":{"realPrice":"4.00","items":[{"goodsId":"g","skuId":"s","amount":"1"}],"promotions":[]}}"""))
+        api.quote(Device("g", "test", "1234", "00", "shop", "", 0, emptyList()), WashMode("s", "wash", "4"))
+        server.takeRequest()
+        val body = server.takeRequest().body.readUtf8()
+        assertTrue(body.contains("isAutoSelectPromotion=0"))
+        assertFalse(body.contains("forbiddenPromotions"))
     }
     @Test fun onlyBooleanBackendPaidStateIsAccepted() = runTest {
         val order = LocalOrder("owner", "test", "wash", "4.00", PayMethod.ALIPAY, OrderPhase.PAYMENT_PENDING, orderNo = "t1")

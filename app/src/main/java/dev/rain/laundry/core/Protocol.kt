@@ -48,15 +48,53 @@ object PurchaseRules {
         addProperty("amount", "1"); addProperty("soldType", "1"); addProperty("num", "1"); addProperty("price", "")
     }.let { "[$it]" }
 
+    /** Original client's explicit no-gold choice; this does not select or purchase an asset. */
+    fun goldExclusion(orgId: String): String = JsonObject().apply {
+        addProperty("promotionId", "0"); addProperty("promotionType", "4")
+        addProperty("assetId", "0"); addProperty("oldPromotionId", "3482"); addProperty("orgId", orgId)
+    }.let { "[$it]" }
+
     fun verifyQuote(data: JsonObject, device: Device, mode: WashMode): Quote {
         val items = data.getAsJsonArray("items") ?: throw ClientError("报价缺少洗衣项目")
         if (items.size() != 1) throw ClientError("报价包含额外商品，请先在原应用核对")
         val item = items[0].asJsonObject
         if (item.text("goodsId") != device.id || item.text("skuId") != mode.id || item.text("amount", "1") != "1")
             throw ClientError("报价项目与所选洗衣模式不一致")
-        val promotions = data.getAsJsonArray("promotions")
-        if (promotions != null && !promotions.isEmpty) throw ClientError("报价附加了未选择的优惠，请先核对")
+        verifyPromotions(data, device.orgId)
         return Quote(device, mode, money(data.text("realPrice")), items(device, mode), data.get("tradeType")?.asInt ?: 0)
+    }
+
+    private fun verifyPromotions(data: JsonObject, orgId: String) {
+        val raw = data.get("promotions")?.takeUnless { it.isJsonNull } ?: return
+        if (!raw.isJsonArray) throw ClientError("报价优惠数据格式尚未适配")
+        fun used(item: JsonObject): Boolean {
+            val flag = item.get("isUsed") ?: return false // Default in the original Promotions/PromotionsItem DTOs.
+            if (!flag.isJsonPrimitive || !flag.asJsonPrimitive.isBoolean) throw ClientError("报价优惠选中状态格式尚未适配")
+            return flag.asBoolean
+        }
+        fun goldExcluded(item: JsonObject) = item.text("promotionType") == "4" &&
+            item.text("promotionId") == "0" && item.text("assetId") == "0" &&
+            item.text("oldPromotionId") == "3482" && item.text("orgId") == orgId
+        for (entry in raw.asJsonArray) {
+            if (!entry.isJsonObject) throw ClientError("报价优惠数据格式尚未适配")
+            val promotion = entry.asJsonObject
+            if (promotion.text("promotionType").toIntOrNull() == null) throw ClientError("报价优惠类型尚未适配")
+            var excludesGold = false
+            for (key in listOf("options", "participateList")) {
+                val options = promotion.get(key) ?: continue
+                if (!options.isJsonArray) throw ClientError("报价优惠选项格式尚未适配")
+                for (option in options.asJsonArray) {
+                    if (!option.isJsonObject) throw ClientError("报价优惠选项格式尚未适配")
+                    if (used(option.asJsonObject)) {
+                        if (!goldExcluded(option.asJsonObject)) throw ClientError("报价附加了未选择的优惠，请先核对")
+                        excludesGold = true
+                    }
+                }
+            }
+            if (used(promotion) && !(promotion.text("promotionType") == "4" && excludesGold)) {
+                throw ClientError("报价附加了未选择的优惠，请先核对")
+            }
+        }
     }
 
     /** Reject agreement-signing payloads; never turn a single wash into a contract. */

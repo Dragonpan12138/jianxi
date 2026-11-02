@@ -1,5 +1,19 @@
 # 接口与流程复查
 
+## 0.1.5 报价字段值与优惠目录
+
+用户确认错误发生于“确认模式，查看金额”，服务端提示 `code=1`、`参数不正确`。依据已保存的 1.144.0 APK，再次核对实际调用点及 DTO 序列化字段：
+
+| 原版证据 | 确认与修正 |
+|---|---|
+| `OrderPayPreviewAct$orderPre$1.invokeSuspend` | 自动优惠分支传 `"1"`，手动选择分支传 `"0"`；修正旧实现的 `isAutoSelectPromotion=false` 为 `0` |
+| `OrderPayPreviewVm.orderPreview` | `orgId` 非空时，`forbiddenPromotions` 包含 `promotionId=0`、`promotionType=4`、`assetId=0`、`oldPromotionId=3482` 及该 `orgId`；补齐此字段 |
+| `OrderPayPreviewAct.createOrder` | 支付宝或钱包付款时补入同一条“不使用金币”的记录；创建请求与此约定保持一致，不复制优惠目录中其他资产 |
+| `Promotions`、`PromotionsItem` 及其 serializer | 优惠目录通过布尔字段 `isUsed` 标识是否使用，缺省为 false；区分未使用的可选目录与实际已选资产。仅允许精确匹配的无金币记录作为排除项，其他已使用优惠继续拒绝 |
+| `GoodsItem`、`WashSkuAct.toOrder` | 再次核对设备、SKU、数量及默认项目字段，保留单个洗衣项目检查 |
+
+新增本机契约测试：旧请求被模拟服务按原版字段约定拒绝并返回 `code=1`；修正后报价通过。另覆盖无 `orgId` 时不发送机构排除项、可选优惠目录、已使用或格式异常优惠的拒绝。这些是本地模拟验证，没有向用户设备提交报价、订单或付款。
+
 ## 0.1.4 付款阶段复查
 
 复查日期：2026-11-02。离线核对用户本次提供的胖乖生活 1.144.0（versionCode 294）APK。用户照片中的二维码可解码为 NQT 参数，现有解析器支持该类型；未将真实设备标识写入公开测试或文档。

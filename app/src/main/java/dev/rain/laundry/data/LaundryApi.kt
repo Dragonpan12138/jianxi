@@ -126,8 +126,13 @@ class LaundryApi(
         val available = post("appoint/checkMachineCanUse", mapOf("skuId" to mode.id))
         if (!available.isJsonPrimitive || !available.asJsonPrimitive.isBoolean) throw ClientError("设备可用状态格式尚未适配")
         if (!available.asBoolean) throw ClientError("此洗衣模式暂不可用，请刷新设备后重试")
-        val data = post("trade/preview/v4", mapOf("items" to PurchaseRules.items(device, mode),
-            "promotions" to "[]", "isAutoSelectPromotion" to "false")).asJsonObject
+        // APK 1.144.0 sends numeric string flags: "0" disables automatic promotion selection.
+        val fields = mutableMapOf("items" to PurchaseRules.items(device, mode),
+            "promotions" to "[]", "isAutoSelectPromotion" to "0")
+        if (device.orgId.isNotBlank()) {
+            fields["forbiddenPromotions"] = PurchaseRules.goldExclusion(device.orgId)
+        }
+        val data = post("trade/preview/v4", fields).asJsonObject
         return PurchaseRules.verifyQuote(data, device, mode)
     }
     suspend fun channels(quote: Quote): List<PayRoute> {
@@ -149,7 +154,8 @@ class LaundryApi(
         return supported
     }
     override suspend fun create(quote: Quote, fix: LocationFix): CreatedOrder {
-        val data = post("trade/create", mapOf("items" to quote.itemsJson, "promotions" to "[]"), quote.device to fix).asJsonObject
+        val data = post("trade/create", mapOf("items" to quote.itemsJson,
+            "promotions" to PurchaseRules.goldExclusion(quote.device.orgId)), quote.device to fix).asJsonObject
         val id = data.text("orderId"); val no = data.text("tradeNo")
         if (id.isBlank() || no.isBlank()) throw ClientError("订单返回内容不完整，请核对订单后再继续")
         return CreatedOrder(id, no)

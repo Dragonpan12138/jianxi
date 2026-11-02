@@ -38,6 +38,23 @@ class ProtocolTest {
         assertThrows(ClientError::class.java) { PurchaseRules.verifyQuote(quote("""[{"goodsId":"g1","skuId":"different"}]"""), device, mode) }
         assertThrows(ClientError::class.java) { PurchaseRules.verifyQuote(quote(promotions = """[{"promotionType":"vip"}]"""), device, mode) }
     }
+    @Test fun unusedPromotionCatalogueDoesNotMeanAnExtraPurchase() {
+        val offered = """[{"promotionType":1,"isUsed":false,"options":[{"promotionId":"vip-offer","isUsed":false}]},{"promotionType":7,"options":[{"promotionId":"coupon-offer"}]}]"""
+        assertEquals("4.00", PurchaseRules.verifyQuote(quote(promotions = offered), device, mode).amount)
+    }
+    @Test fun selectedOrMalformedPromotionsAreStillRejected() {
+        for (promotions in listOf(
+            """[{"promotionType":1,"isUsed":true,"options":[]}]""",
+            """[{"promotionType":7,"isUsed":false,"options":[{"promotionId":"coupon","isUsed":true}]}]""",
+            """[{"promotionType":7,"participateList":[{"promotionId":"coupon","isUsed":true}]}]""",
+            """[{"promotionType":7,"isUsed":"false"}]"""
+        )) assertThrows(ClientError::class.java) { PurchaseRules.verifyQuote(quote(promotions = promotions), device, mode) }
+    }
+    @Test fun explicitNoGoldChoiceIsAllowedButOtherAssetsAreRejected() {
+        val excluded = """[{"promotionType":4,"isUsed":true,"options":[{"promotionId":"0","promotionType":4,"assetId":"0","oldPromotionId":"3482","orgId":"org","isUsed":true}]}]"""
+        assertEquals("4.00", PurchaseRules.verifyQuote(quote(promotions = excluded), device, mode).amount)
+        assertThrows(ClientError::class.java) { PurchaseRules.verifyQuote(quote(promotions = excluded.replace("\"assetId\":\"0\"", "\"assetId\":\"123\"")), device, mode) }
+    }
     private fun alipay(extra: String = "", amount: String = "4.00", method: String = "alipay.trade.app.pay"): String {
         val biz = """{"total_amount":"$amount","product_code":"QUICK_MSECURITY_PAY"$extra}"""
         return "method=$method&biz_content=" + URLEncoder.encode(biz, "UTF-8") + "&sign=not-a-real-payment"
