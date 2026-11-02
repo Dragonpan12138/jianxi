@@ -11,6 +11,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.OpenInNew
 import androidx.compose.material.icons.outlined.Code
+import androidx.compose.material.icons.outlined.FavoriteBorder
 import androidx.compose.material.icons.outlined.LocalLaundryService
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -37,6 +38,7 @@ fun AboutScreen(onBack: () -> Unit) {
     val scope = rememberCoroutineScope()
     val snackbar = remember { SnackbarHostState() }
     var licenseOpen by rememberSaveable { mutableStateOf(false) }
+    var donationOpen by rememberSaveable { mutableStateOf(false) }
 
     Scaffold(
         containerColor = colors.background,
@@ -77,7 +79,7 @@ fun AboutScreen(onBack: () -> Unit) {
                     }
                     Text("简洗", style = MaterialTheme.typography.headlineLarge,
                         fontWeight = FontWeight.SemiBold)
-                    Text("把洗衣，变简单。", color = colors.onSurfaceVariant)
+                    Text("把洗衣，变简单", color = colors.onSurfaceVariant)
                     Text("版本 ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})",
                         style = MaterialTheme.typography.labelLarge, color = colors.onSurfaceVariant)
                 }
@@ -108,6 +110,15 @@ fun AboutScreen(onBack: () -> Unit) {
                     }
                 }
 
+                FilledTonalButton(
+                    onClick = { donationOpen = true },
+                    modifier = Modifier.fillMaxWidth().height(54.dp)
+                ) {
+                    Icon(Icons.Outlined.FavoriteBorder, contentDescription = null, modifier = Modifier.size(20.dp))
+                    Spacer(Modifier.width(10.dp))
+                    Text("打赏支持", style = MaterialTheme.typography.titleMedium)
+                }
+
                 Card(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(24.dp),
                     colors = CardDefaults.cardColors(containerColor = colors.surfaceContainerLow)) {
                     Column(modifier = Modifier.fillMaxWidth().padding(22.dp),
@@ -131,6 +142,8 @@ fun AboutScreen(onBack: () -> Unit) {
             }
         }
     }
+
+    if (donationOpen) DonationDialog(onClose = { donationOpen = false })
 
     if (licenseOpen) {
         val license = remember(context) {

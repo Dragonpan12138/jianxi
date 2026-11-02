@@ -4,7 +4,13 @@
 
 [GitHub 源码](https://github.com/xiyuchengxu/jianxi) · [问题反馈](https://github.com/xiyuchengxu/jianxi/issues) · [MIT 开源协议](LICENSE)
 
-当前版本 **0.1.7**，支持 Android 8.0（API 26）及以上系统。包名 `dev.rain.laundry`，可与原版并存，并可覆盖安装此前测试版。本项目与原服务平台无隶属关系。
+当前版本 **0.1.8**，支持 Android 8.0（API 26）及以上系统。包名 `dev.rain.laundry`，可与原版并存，并可覆盖安装此前测试版。本项目与原服务平台无隶属关系。
+
+## 0.1.8 关于页打赏
+
+关于页新增“打赏支持”按钮，展示作者提供的支付宝收款码，并可保存图片后使用支付宝识别。收款码原图随应用内置，可离线查看。关于页标语改为“把洗衣，变简单”，去掉末尾句号。
+
+Android 10 及以上保存到相册，较早系统使用系统文件保存窗口；保存图片不新增存储权限。实现参考 [Android 共享媒体说明](https://developer.android.com/training/data-storage/shared/media)。Android 15 模拟器已验证弹窗、保存后图片字节一致、系统返回及既有报价界面，3 项运行测试通过。
 
 ## 0.1.7 模拟器验证与底栏避让
 
@@ -121,6 +127,7 @@ adb -s emulator-5558 shell am instrument -w -r -e class dev.rain.laundry.LocalRu
 | `LaundryViewModel.kt` | 页面状态与登录、下单、订单恢复 |
 | `ui/LaundryApp.kt` | Material 3 页面 |
 | `ui/AboutScreen.kt` | 关于页面、GitHub 入口及离线 MIT 全文 |
+| `ui/DonationDialog.kt` | 打赏收款码展示与图片保存 |
 | `ui/GlassNavigationBar.kt` | 小尺寸底栏、拖动手势、放大透镜及回弹 |
 | `ui/GlassLensEffect.kt` | AGSL 边缘折射及 RGB 色散 |
 | `core/Protocol.kt` | 二维码、签名、报价和支付参数核对 |

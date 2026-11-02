@@ -1,9 +1,12 @@
 package dev.rain.laundry
 
+import android.content.ContentUris
 import android.graphics.Bitmap
 import android.graphics.Rect
+import android.net.Uri
 import android.os.Bundle
 import android.os.SystemClock
+import android.provider.MediaStore
 import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.accessibility.AccessibilityNodeInfo
@@ -39,6 +42,26 @@ class LocalRuntimeTest {
             awaitText("GitHub · 项目源码")
             awaitText("版本 ${BuildConfig.VERSION_NAME}")
             capture("02-about")
+            click("打赏支持")
+            awaitText("支付宝打赏收款码")
+            capture("11-donation")
+            val previousImages = savedDonationImages()
+            click("保存收款码")
+            awaitText("已保存到相册")
+            val createdImages = savedDonationImages() - previousImages
+            try {
+                assertEquals(1, createdImages.size)
+                val context = instrumentation.targetContext
+                val original = context.resources.openRawResource(R.raw.donation_alipay).use { it.readBytes() }
+                val saved = context.contentResolver.openInputStream(createdImages.single())!!.use { it.readBytes() }
+                assertArrayEquals("Saved QR image must preserve the supplied bytes", original, saved)
+                capture("12-donation-saved")
+            } finally {
+                createdImages.forEach { instrumentation.targetContext.contentResolver.delete(it, null, null) }
+            }
+            instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK)
+            awaitText("GitHub · 项目源码")
+            scrollToText("阅读完整协议")
             click("阅读完整协议")
             awaitText("Permission is hereby granted")
             capture("03-license")
@@ -197,6 +220,29 @@ class LocalRuntimeTest {
 
     private fun awaitText(text: String) = awaitNode {
         it.text?.contains(text) == true || it.contentDescription?.contains(text) == true
+    }
+
+    private fun scrollToText(text: String) {
+        repeat(8) {
+            if (find(automation.rootInActiveWindow) { it.text?.contains(text) == true } != null) return
+            awaitNode { it.isScrollable }.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD)
+            SystemClock.sleep(250)
+        }
+        awaitText(text)
+    }
+
+    private fun savedDonationImages(): Set<Uri> {
+        val images = mutableSetOf<Uri>()
+        instrumentation.targetContext.contentResolver.query(
+            MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+            arrayOf(MediaStore.Images.Media._ID),
+            "${MediaStore.Images.Media.DISPLAY_NAME} LIKE ? AND ${MediaStore.Images.Media.OWNER_PACKAGE_NAME} = ?",
+            arrayOf("简洗-支付宝收款码%", instrumentation.targetContext.packageName), null
+        )?.use { cursor ->
+            while (cursor.moveToNext()) images.add(ContentUris.withAppendedId(
+                MediaStore.Images.Media.EXTERNAL_CONTENT_URI, cursor.getLong(0)))
+        }
+        return images
     }
 
     private fun click(text: String) {
