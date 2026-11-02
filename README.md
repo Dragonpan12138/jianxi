@@ -4,7 +4,11 @@
 
 [GitHub 源码](https://github.com/xiyuchengxu/jianxi) · [问题反馈](https://github.com/xiyuchengxu/jianxi/issues) · [MIT 开源协议](LICENSE)
 
-当前版本 **0.1.5**，支持 Android 8.0（API 26）及以上系统。包名 `dev.rain.laundry`，可与原版并存，并可覆盖安装此前测试版。本项目与原服务平台无隶属关系。
+当前版本 **0.1.6**，支持 Android 8.0（API 26）及以上系统。包名 `dev.rain.laundry`，可与原版并存，并可覆盖安装此前测试版。本项目与原服务平台无隶属关系。
+
+## 0.1.6 报价空值兼容
+
+按原版 JSON 转换器的默认值规则兼容空优惠列表、空选中标记和空类型字段。`options:null`、`participateList:null` 作为空列表处理，避免误报“报价优惠选项格式尚未适配”。已选优惠及非空的异常结构仍会停止确认；格式提示补充字段名和数据类型，不输出字段内容。
 
 ## 0.1.5 报价参数修正
 

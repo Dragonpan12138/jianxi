@@ -1,5 +1,17 @@
 # 接口与流程复查
 
+## 0.1.6 空值与原版默认值规则
+
+用户反馈报价返回后提示“报价优惠选项格式尚未适配”。原实现对显式 JSON `null` 与字段缺失采用了不同处理，前者会触发格式异常。
+
+- `NetworkApi.setRetrofitBuilder$lambda$2` 明确启用 `coerceInputValues=true`。
+- `Promotions` 的 `options`、`participateList` 默认空列表，`isUsed` 默认 false，`promotionType` 默认 0。
+- `PromotionsItem.isUsed` 默认 false；`OrderPayPreview.tradeType` 默认 0。
+- 对上述字段的显式 null 恢复这些默认值。空列表不会跳过顶层已选状态检查，子选项的已选状态也继续检查。
+- 非空的对象、文本或异常列表成员不猜测转换；提示中附字段名及类型，保留字段内容隐私。
+
+先用 `options:null` 与 `participateList:null` 的本机 JSON 用例复现相同提示，修正后通过。另覆盖可选字段为 null、空列表不能隐藏已选优惠、未知结构仍拒绝等情形。未取得用户手机的完整响应，此次确认的是空值兼容缺口，实际设备仍需复测。
+
 ## 0.1.5 报价字段值与优惠目录
 
 用户确认错误发生于“确认模式，查看金额”，服务端提示 `code=1`、`参数不正确`。依据已保存的 1.144.0 APK，再次核对实际调用点及 DTO 序列化字段：

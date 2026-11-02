@@ -1,6 +1,7 @@
 package dev.rain.laundry.core
 
 import com.google.gson.JsonParser
+import com.google.gson.JsonNull
 import org.junit.Assert.*
 import org.junit.Test
 import java.net.URLEncoder
@@ -54,6 +55,39 @@ class ProtocolTest {
         val excluded = """[{"promotionType":4,"isUsed":true,"options":[{"promotionId":"0","promotionType":4,"assetId":"0","oldPromotionId":"3482","orgId":"org","isUsed":true}]}]"""
         assertEquals("4.00", PurchaseRules.verifyQuote(quote(promotions = excluded), device, mode).amount)
         assertThrows(ClientError::class.java) { PurchaseRules.verifyQuote(quote(promotions = excluded.replace("\"assetId\":\"0\"", "\"assetId\":\"123\"")), device, mode) }
+    }
+    @Test fun jsonNullPromotionListsAreEmpty() {
+        for (promotions in listOf(
+            """[{"promotionType":7,"isUsed":false,"options":null,"participateList":null}]""",
+            """[{"promotionType":7,"options":[],"participateList":null}]""",
+            """[{"promotionType":7,"options":null,"participateList":[]}]"""
+        )) assertEquals("4.00", PurchaseRules.verifyQuote(quote(promotions = promotions), device, mode).amount)
+    }
+    @Test fun nullableOptionalQuoteFieldsUseOriginalDefaults() {
+        val data = quote(promotions = """[{"promotionType":null,"isUsed":null,"options":[{"isUsed":null}],"participateList":null}]""")
+        data.add("tradeType", JsonNull.INSTANCE)
+        val result = PurchaseRules.verifyQuote(data, device, mode)
+        assertEquals("4.00", result.amount)
+        assertEquals(0, result.tradeType)
+    }
+    @Test fun missingOrNullOptionsNeverHideASelectedPromotion() {
+        for (promotions in listOf(
+            """[{"promotionType":1,"isUsed":true,"options":null,"participateList":null}]""",
+            """[{"promotionType":1,"isUsed":true}]""",
+            """[{"promotionType":7,"isUsed":null,"options":[{"isUsed":true}],"participateList":null}]"""
+        )) assertThrows(ClientError::class.java) { PurchaseRules.verifyQuote(quote(promotions = promotions), device, mode) }
+    }
+    @Test fun nonArrayPromotionDataIsStillRejectedWithShapeContext() {
+        val cases = listOf(
+            """[{"promotionType":7,"options":{}}]""" to "options：对象",
+            """[{"promotionType":7,"participateList":"private-value"}]""" to "participateList：文本",
+            """[{"promotionType":7,"options":[null]}]""" to "options[]：空值"
+        )
+        for ((promotions, context) in cases) {
+            val error = assertThrows(ClientError::class.java) { PurchaseRules.verifyQuote(quote(promotions = promotions), device, mode) }
+            assertTrue(error.message.orEmpty().contains(context))
+            assertFalse(error.message.orEmpty().contains("private-value"))
+        }
     }
     private fun alipay(extra: String = "", amount: String = "4.00", method: String = "alipay.trade.app.pay"): String {
         val biz = """{"total_amount":"$amount","product_code":"QUICK_MSECURITY_PAY"$extra}"""

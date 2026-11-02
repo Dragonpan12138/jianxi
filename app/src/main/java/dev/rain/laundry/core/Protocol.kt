@@ -61,16 +61,30 @@ object PurchaseRules {
         if (item.text("goodsId") != device.id || item.text("skuId") != mode.id || item.text("amount", "1") != "1")
             throw ClientError("报价项目与所选洗衣模式不一致")
         verifyPromotions(data, device.orgId)
-        return Quote(device, mode, money(data.text("realPrice")), items(device, mode), data.get("tradeType")?.asInt ?: 0)
+        val rawTradeType = data.get("tradeType")?.takeUnless { it.isJsonNull }
+        val tradeType = if (rawTradeType == null) 0 else {
+            if (!rawTradeType.isJsonPrimitive) throw ClientError("报价订单类型格式尚未适配")
+            rawTradeType.asString.toIntOrNull() ?: throw ClientError("报价订单类型格式尚未适配")
+        }
+        return Quote(device, mode, money(data.text("realPrice")), items(device, mode), tradeType)
     }
 
     private fun verifyPromotions(data: JsonObject, orgId: String) {
         val raw = data.get("promotions")?.takeUnless { it.isJsonNull } ?: return
         if (!raw.isJsonArray) throw ClientError("报价优惠数据格式尚未适配")
         fun used(item: JsonObject): Boolean {
-            val flag = item.get("isUsed") ?: return false // Default in the original Promotions/PromotionsItem DTOs.
+            // Original converter uses coerceInputValues=true, including explicit JSON nulls.
+            val flag = item.get("isUsed")?.takeUnless { it.isJsonNull } ?: return false
             if (!flag.isJsonPrimitive || !flag.asJsonPrimitive.isBoolean) throw ClientError("报价优惠选中状态格式尚未适配")
             return flag.asBoolean
+        }
+        fun shape(value: com.google.gson.JsonElement): String = when {
+            value.isJsonNull -> "空值"
+            value.isJsonArray -> "数组"
+            value.isJsonObject -> "对象"
+            value.asJsonPrimitive.isString -> "文本"
+            value.asJsonPrimitive.isBoolean -> "布尔值"
+            else -> "数值"
         }
         fun goldExcluded(item: JsonObject) = item.text("promotionType") == "4" &&
             item.text("promotionId") == "0" && item.text("assetId") == "0" &&
@@ -78,20 +92,24 @@ object PurchaseRules {
         for (entry in raw.asJsonArray) {
             if (!entry.isJsonObject) throw ClientError("报价优惠数据格式尚未适配")
             val promotion = entry.asJsonObject
-            if (promotion.text("promotionType").toIntOrNull() == null) throw ClientError("报价优惠类型尚未适配")
+            val rawType = promotion.get("promotionType")?.takeUnless { it.isJsonNull }
+            val promotionType = if (rawType == null) 0 else {
+                if (!rawType.isJsonPrimitive) throw ClientError("报价优惠类型尚未适配")
+                rawType.asString.toIntOrNull() ?: throw ClientError("报价优惠类型尚未适配")
+            }
             var excludesGold = false
             for (key in listOf("options", "participateList")) {
-                val options = promotion.get(key) ?: continue
-                if (!options.isJsonArray) throw ClientError("报价优惠选项格式尚未适配")
+                val options = promotion.get(key)?.takeUnless { it.isJsonNull } ?: continue
+                if (!options.isJsonArray) throw ClientError("报价优惠选项格式尚未适配（$key：${shape(options)}）")
                 for (option in options.asJsonArray) {
-                    if (!option.isJsonObject) throw ClientError("报价优惠选项格式尚未适配")
+                    if (!option.isJsonObject) throw ClientError("报价优惠选项格式尚未适配（$key[]：${shape(option)}）")
                     if (used(option.asJsonObject)) {
                         if (!goldExcluded(option.asJsonObject)) throw ClientError("报价附加了未选择的优惠，请先核对")
                         excludesGold = true
                     }
                 }
             }
-            if (used(promotion) && !(promotion.text("promotionType") == "4" && excludesGold)) {
+            if (used(promotion) && !(promotionType == 4 && excludesGold)) {
                 throw ClientError("报价附加了未选择的优惠，请先核对")
             }
         }
