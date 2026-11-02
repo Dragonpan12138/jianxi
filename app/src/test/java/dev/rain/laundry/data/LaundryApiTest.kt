@@ -114,6 +114,33 @@ class LaundryApiTest {
         val request = server.takeRequest()
         assertEquals("/order/cancel", request.path); assertTrue(request.body.readUtf8().contains("orderId=id1"))
     }
+    @Test fun orderDetailsUseOrderIdAndRecognizeAllDocumentedStates() = runTest {
+        val order = LocalOrder("owner", "test", "wash", "1.00", PayMethod.ALIPAY, OrderPhase.CREATED,
+            orderId = "local-id", orderNo = "local-trade")
+        for (status in RemoteOrderStatus.entries) {
+            server.enqueue(MockResponse().setBody("""{"code":0,"data":{"id":"local-id","orderStatus":${status.wire}}}"""))
+            assertEquals(status, api.orderStatus(order))
+            val request = server.takeRequest()
+            assertEquals("/order/detail", request.path)
+            assertEquals("orderId=local-id&token=example-token", request.body.readUtf8())
+        }
+    }
+    @Test fun unknownOrderDetailsCannotReleaseAnUnfinishedOrder() = runTest {
+        val order = LocalOrder("owner", "test", "wash", "1.00", PayMethod.ALIPAY, OrderPhase.CREATED, orderId = "local-id")
+        for (data in listOf("null", "{}", """{"id":"other-id","orderStatus":1}""",
+            """{"id":"local-id"}""", """{"id":"local-id","orderStatus":99}""")) {
+            server.enqueue(MockResponse().setBody("""{"code":0,"data":$data}"""))
+            assertTrue(runCatching { api.orderStatus(order) }.exceptionOrNull() is ClientError)
+        }
+    }
+    @Test fun orderNumberFallbackMustMatchTheReturnedOrder() = runTest {
+        val order = LocalOrder("owner", "test", "wash", "1.00", PayMethod.ALIPAY, OrderPhase.CREATED, orderNo = "local-trade")
+        server.enqueue(MockResponse().setBody("""{"code":0,"data":{"id":"local-id","orderNo":"local-trade","orderStatus":1}}"""))
+        assertEquals(RemoteOrderStatus.CLOSED, api.orderStatus(order))
+        assertEquals("orderNo=local-trade&token=example-token", server.takeRequest().body.readUtf8())
+        server.enqueue(MockResponse().setBody("""{"code":0,"data":{"id":"other-id","orderNo":"other-trade","orderStatus":1}}"""))
+        assertTrue(runCatching { api.orderStatus(order) }.exceptionOrNull() is ClientError)
+    }
     @Test fun obsoleteAuthenticatedSmsEndpointCannotBeCalled() = runTest {
         assertTrue(runCatching { api.post("user/smsCode", mapOf("phone" to "13800000000")) }.exceptionOrNull() is IllegalArgumentException)
         assertEquals(0, server.requestCount)

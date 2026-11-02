@@ -112,7 +112,9 @@ class LaundryViewModel(application: Application) : AndroidViewModel(application)
         val order = state.value.order ?: return
         if (order.orderNo.isEmpty() || order.phase.finished) return
         work("正在核对付款状态") {
-            paymentWorkflow.startOrResume(order)
+            val current = synchronizeOrderState(order)
+            if (current.phase.finished) noticeOrderState(current)
+            else paymentWorkflow.startOrResume(current)
         }
     }
     private suspend fun payExisting(order: LocalOrder) {
@@ -131,7 +133,7 @@ class LaundryViewModel(application: Application) : AndroidViewModel(application)
     fun sdkReturned(orderNo: String, sdkStatus: String?) {
         viewModelScope.launch {
             state.first { !it.busy }
-            val order = state.value.order?.takeIf { it.orderNo == orderNo && it.phase != OrderPhase.CANCELLED } ?: return@launch
+            val order = state.value.order?.takeIf { it.orderNo == orderNo && !it.phase.finished } ?: return@launch
             work("正在查询付款结果") {
                 if (sdkStatus == "6001") notice("付款已取消，可在订单中继续付款")
                 poll(order)
@@ -140,25 +142,53 @@ class LaundryViewModel(application: Application) : AndroidViewModel(application)
     }
     fun cancelOrder() {
         val order = state.value.order ?: return
-        if (order.orderId.isBlank() || order.phase in setOf(OrderPhase.PAID, OrderPhase.CANCELLED)) return
+        if (order.orderId.isBlank() || order.phase.finished) return
         work("正在取消订单") {
-            if (api.paid(order)) { confirmPaid(order); return@work }
-            api.cancel(order)
-            saveOrder(order.copy(phase = OrderPhase.CANCELLED))
+            val current = synchronizeOrderState(order)
+            if (current.phase.finished) { noticeOrderState(current); return@work }
+            if (api.paid(current)) { confirmPaid(current); return@work }
+            try { api.cancel(current) }
+            catch (error: BusinessRejected) {
+                // The order can expire between the detail query and cancellation.
+                if (error.code == 3122) {
+                    val latest = try { synchronizeOrderState(current) }
+                    catch (cancelled: CancellationException) { throw cancelled }
+                    catch (_: Exception) { throw error }
+                    if (latest.phase.finished) { noticeOrderState(latest); return@work }
+                }
+                throw error
+            }
+            saveOrder(current.copy(phase = OrderPhase.CANCELLED))
             notice("订单已取消")
         }
     }
     fun refreshOrder() {
         val order = state.value.order ?: return
-        if (order.orderNo.isBlank()) { notice("上一次下单结果未确认，请先在原应用核对订单"); return }
-        work("正在查询订单") { if (api.paid(order)) confirmPaid(order) else notice("尚未确认付款，可稍后再次查询") }
+        if (order.orderId.isBlank() && order.orderNo.isBlank()) { notice("上一次下单结果未确认，请先在原应用核对订单"); return }
+        work("正在查询订单") { noticeOrderState(synchronizeOrderState(order)) }
     }
+    private suspend fun synchronizeOrderState(order: LocalOrder): LocalOrder {
+        val current = OrderStates.apply(order, api.orderStatus(order))
+        if (current != order) saveOrder(current)
+        return current
+    }
+    private fun noticeOrderState(order: LocalOrder) = notice(when (order.phase) {
+        OrderPhase.CLOSED -> "订单已关闭，可以返回洗衣重新选择模式"
+        OrderPhase.COMPLETED -> "订单已完成"
+        OrderPhase.REFUNDING -> "订单正在退款，请在原应用查看进度"
+        OrderPhase.REFUNDED -> "订单已退款，请核对到账情况"
+        OrderPhase.PAID -> "付款已确认，请查看洗衣机运行状态"
+        OrderPhase.CANCELLED -> "订单已取消"
+        else -> "尚未确认付款，可稍后再次查询"
+    })
     private suspend fun poll(order: LocalOrder) {
         repeat(5) { index ->
             if (api.paid(order)) { confirmPaid(order); return }
             if (index < 4) delay(2000)
         }
-        notice("付款结果仍在确认，请稍后刷新订单")
+        val current = synchronizeOrderState(order)
+        if (current.phase.finished) noticeOrderState(current)
+        else notice("付款结果仍在确认，请稍后刷新订单")
     }
     private suspend fun confirmPaid(order: LocalOrder) {
         val paid = order.copy(phase = OrderPhase.PAID)

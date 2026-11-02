@@ -22,7 +22,7 @@ class LaundryApi(
         private val ANONYMOUS_PATHS = setOf("common/sms/sendCode", "user/reg")
         val ALLOWED_PATHS = setOf("common/sms/sendCode", "user/reg", "goods/scan/v2", "goods/normal/details",
             "goods/normal/skus", "trade/preview/v4", "trade/create", "payChannelRoute/prePay",
-            "pay/unify/prePay", "pay/unify/pay", "order/pay_status", "order/sync", "order/cancel", "appoint/checkMachineCanUse")
+            "pay/unify/prePay", "pay/unify/pay", "order/pay_status", "order/detail", "order/sync", "order/cancel", "appoint/checkMachineCanUse")
         private val PAYMENT_OPERATIONS = mapOf(
             "appoint/checkMachineCanUse" to "核对设备状态失败",
             "trade/preview/v4" to "核对洗衣金额失败",
@@ -31,6 +31,7 @@ class LaundryApi(
             "pay/unify/prePay" to "获取支付信息失败",
             "pay/unify/pay" to "余额付款未完成",
             "order/pay_status" to "查询付款状态失败",
+            "order/detail" to "查询订单详情失败",
             "order/cancel" to "取消订单失败"
         )
     }
@@ -177,6 +178,22 @@ class LaundryApi(
         val data = post("order/pay_status", mapOf("orderNo" to order.orderNo, "payType" to order.payMethod.wire))
         if (!data.isJsonPrimitive || !data.asJsonPrimitive.isBoolean) throw ClientError("支付状态格式尚未适配")
         return data.asBoolean
+    }
+    suspend fun orderStatus(order: LocalOrder): RemoteOrderStatus {
+        val fields = when {
+            order.orderId.isNotBlank() -> mapOf("orderId" to order.orderId)
+            order.orderNo.isNotBlank() -> mapOf("orderNo" to order.orderNo)
+            else -> throw ClientError("订单编号不完整，请先在原应用核对")
+        }
+        val response = post("order/detail", fields)
+        if (!response.isJsonObject) throw ClientError("订单详情格式尚未适配，请先在原应用核对")
+        val data = response.asJsonObject
+        val matches = if (order.orderId.isNotBlank()) data.text("id") == order.orderId
+            else data.text("orderNo") == order.orderNo
+        if (!matches) throw ClientError("订单详情编号不一致，请先在原应用核对")
+        val code = data.text("orderStatus").toIntOrNull()
+        return RemoteOrderStatus.entries.firstOrNull { it.wire == code }
+            ?: throw ClientError("订单状态格式尚未适配，请先在原应用核对")
     }
     suspend fun sync(order: LocalOrder) { post("order/sync", mapOf("orderNo" to order.orderNo, "payType" to order.payMethod.wire)) }
     suspend fun cancel(order: LocalOrder) {

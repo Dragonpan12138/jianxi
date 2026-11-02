@@ -14,6 +14,9 @@ import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import dev.rain.laundry.data.LaundryApi
+import dev.rain.laundry.core.*
+import com.google.gson.JsonObject
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
 import okhttp3.FormBody
 import okhttp3.OkHttpClient
@@ -25,7 +28,9 @@ import org.junit.Assert.*
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.File
+import java.net.URLEncoder
 import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.atomic.AtomicInteger
 
 /** Runs on a fresh local emulator. All LaundryApi requests are intercepted before networking. */
 @RunWith(AndroidJUnit4::class)
@@ -143,9 +148,85 @@ class LocalRuntimeTest {
         }
     }
 
+    @Test fun expiredOrderIsRecognizedFromEveryOrderAction() {
+        for ((index, action) in listOf("刷新订单状态", "继续付款", "取消未付款订单").withIndex()) {
+            withLocalSession(detailStatuses = listOf(1)) { vm, calls ->
+                setLocalOrder(vm)
+                awaitText("订单待付款")
+                scrollToText(action)
+                click(action)
+                if (action == "取消未付款订单") { awaitText("取消这笔订单？"); click("确认取消") }
+                await { !vm.state.value.busy && vm.state.value.order?.phase == OrderPhase.CLOSED }
+                awaitText("订单已关闭")
+                assertEquals(listOf("/order/detail"), calls.toList())
+                assertTrue(vm.state.value.order!!.phase.finished)
+                await { find(automation.rootInActiveWindow) { it.text?.contains("继续付款") == true } == null }
+                capture("${13 + index}-closed-order")
+            }
+        }
+    }
+
+    @Test fun cancellationRace3122RefreshesTheClosedOrder() = withLocalSession(
+        detailStatuses = listOf(0, 1), cancelRejected = true
+    ) { vm, calls ->
+        setLocalOrder(vm)
+        scrollToText("取消未付款订单")
+        click("取消未付款订单")
+        awaitText("取消这笔订单？")
+        click("确认取消")
+        await { !vm.state.value.busy && vm.state.value.order?.phase == OrderPhase.CLOSED }
+        awaitText("订单已关闭")
+        assertEquals(listOf("/order/detail", "/order/pay_status", "/order/cancel", "/order/detail"), calls.toList())
+        capture("16-closed-after-3122")
+    }
+
+    @Suppress("UNCHECKED_CAST")
+    @Test fun defaultAlipayProductReachesThePaymentHandoffWithoutCreatingAnotherOrder() = withLocalSession(
+        allowPrepay = true
+    ) { vm, calls ->
+        setLocalOrder(vm)
+        val channelField = LaundryViewModel::class.java.getDeclaredField("launchChannel").apply { isAccessible = true }
+        val originalChannel = channelField.get(vm) as Channel<PaymentLaunch>
+        val capturedChannel = Channel<PaymentLaunch>(Channel.BUFFERED)
+        // MainActivity continues to collect its original flow. Capture the handoff before the real SDK.
+        instrumentation.runOnMainSync { channelField.set(vm, capturedChannel) }
+        try {
+            scrollToText("继续付款")
+            click("继续付款")
+            await { !vm.state.value.busy && vm.state.value.order?.phase == OrderPhase.PAYMENT_PENDING }
+            var launch: PaymentLaunch? = null
+            await { launch = capturedChannel.tryReceive().getOrNull(); launch != null }
+            assertEquals("local-trade-no", launch!!.orderNo)
+            assertEquals(localAlipayPayload(), launch!!.payload)
+            assertEquals("local-order-id", vm.state.value.order?.orderId)
+            assertEquals(listOf("/order/detail", "/pay/unify/prePay"), calls.toList())
+            capture("17-payment-parameters-accepted")
+        } finally {
+            instrumentation.runOnMainSync { channelField.set(vm, originalChannel) }
+            capturedChannel.close()
+        }
+    }
+
+    @Suppress("UNCHECKED_CAST")
+    private fun setLocalOrder(vm: LaundryViewModel) {
+        instrumentation.runOnMainSync {
+            val state = LaundryViewModel::class.java.getDeclaredField("_state").apply { isAccessible = true }
+                .get(vm) as MutableStateFlow<UiState>
+            state.value = state.value.copy(page = Page.ORDERS, order = LocalOrder("local-runtime-owner",
+                "本地测试洗衣机", "标准洗", "4.00", PayMethod.ALIPAY, OrderPhase.CREATED,
+                orderId = "local-order-id", orderNo = "local-trade-no"))
+        }
+    }
+
+    private fun localAlipayPayload() = "method=alipay.trade.app.pay&biz_content=" + URLEncoder.encode(
+        """{"total_amount":"4.00","out_trade_no":"local-alipay-order"}""", "UTF-8") + "&sign=LOCAL-UNSIGNED-TEST"
+
     @Suppress("UNCHECKED_CAST")
     private fun withLocalSession(
         promotions: String = """[{"promotionType":7,"isUsed":null,"options":null,"participateList":null}]""",
+        detailStatuses: List<Int> = listOf(0),
+        cancelRejected: Boolean = false,
+        allowPrepay: Boolean = false,
         test: (LaundryViewModel, CopyOnWriteArrayList<String>) -> Unit
     ) {
         ActivityScenario.launch(MainActivity::class.java).use { scenario ->
@@ -155,6 +236,10 @@ class LocalRuntimeTest {
             lateinit var oldClient: OkHttpClient
             lateinit var initial: UiState
             val calls = CopyOnWriteArrayList<String>()
+            val detailRequests = AtomicInteger()
+            val preferences = instrumentation.targetContext.getSharedPreferences("laundry_vault", 0)
+            val fixtureKey = "order_local-runtime-owner"
+            val previousFixture = preferences.getString(fixtureKey, null)
             val clientField = LaundryApi::class.java.getDeclaredField("client").apply { isAccessible = true }
             scenario.onActivity { activity ->
                 vm = MainActivity::class.java.getDeclaredMethod("getVm").apply { isAccessible = true }.invoke(activity) as LaundryViewModel
@@ -179,6 +264,17 @@ class LocalRuntimeTest {
                         "/payChannelRoute/prePay" -> if (fields["shopId"] == "3100001" && fields["goodsId"] == "local-device" && fields["imei"] == "LOCAL-TEST-IMEI")
                             """{"code":0,"data":[{"method":13,"autoPayState":0},{"method":2,"autoPayState":0}]}"""
                         else """{"code":1,"msg":"Failed to convert property 'shopId' to java.lang.Long"}"""
+                        "/order/detail" -> if (fields["orderId"] == "local-order-id") {
+                            val status = detailStatuses[detailRequests.getAndIncrement().coerceAtMost(detailStatuses.lastIndex)]
+                            """{"code":0,"data":{"id":"local-order-id","orderNo":"local-trade-no","orderStatus":$status}}"""
+                        } else """{"code":1,"msg":"Unexpected local order"}"""
+                        "/order/pay_status" -> """{"code":0,"data":false}"""
+                        "/order/cancel" -> if (cancelRejected) """{"code":3122,"msg":"只有未支付订单才能取消"}"""
+                            else """{"code":0,"data":"已取消"}"""
+                        "/pay/unify/prePay" -> if (allowPrepay) JsonObject().apply {
+                            addProperty("code", 0)
+                            add("data", JsonObject().apply { addProperty("prepayParam", localAlipayPayload()) })
+                        }.toString() else """{"code":1,"msg":"Local payment is disabled"}"""
                         else -> """{"code":1,"msg":"本地测试已阻止非预期接口"}"""
                     }
                     // Never call chain.proceed: no request reaches a socket or the production service.
@@ -194,6 +290,9 @@ class LocalRuntimeTest {
                     state.value = initial
                     clientField.set(api, oldClient)
                 }
+                preferences.edit().apply {
+                    if (previousFixture == null) remove(fixtureKey) else putString(fixtureKey, previousFixture)
+                }.commit()
             }
         }
     }
@@ -226,7 +325,7 @@ class LocalRuntimeTest {
 
     private fun scrollToText(text: String) {
         repeat(8) {
-            if (find(automation.rootInActiveWindow) { it.text?.contains(text) == true } != null) return
+            if (find(automation.rootInActiveWindow) { it.text?.toString() == text } != null) return
             awaitNode { it.isScrollable }.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD)
             SystemClock.sleep(250)
         }
@@ -250,7 +349,7 @@ class LocalRuntimeTest {
     private fun click(text: String) {
         await {
             var node = find(automation.rootInActiveWindow) {
-                it.text?.contains(text) == true || it.contentDescription?.contains(text) == true
+                it.text?.toString() == text || it.contentDescription?.toString() == text
             }
             while (node != null && !node.isClickable) node = node.parent
             node != null && node.isEnabled && node.performAction(AccessibilityNodeInfo.ACTION_CLICK)

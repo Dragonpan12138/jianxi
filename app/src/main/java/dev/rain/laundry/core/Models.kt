@@ -17,8 +17,9 @@ data class PayRoute(val method: PayMethod, val thirdChannel: String = "", val ou
 }
 data class CreatedOrder(val id: String, val number: String)
 data class LocationFix(val latitude: Double, val longitude: Double)
-enum class OrderPhase { CREATING, UNCONFIRMED, CREATED, PAYMENT_PENDING, PAID, CANCELLED, REJECTED }
-val OrderPhase.finished: Boolean get() = this in setOf(OrderPhase.PAID, OrderPhase.CANCELLED, OrderPhase.REJECTED)
+enum class OrderPhase { CREATING, UNCONFIRMED, CREATED, PAYMENT_PENDING, PAID, CANCELLED, REJECTED, CLOSED, COMPLETED, REFUNDING, REFUNDED }
+val OrderPhase.finished: Boolean get() = this in setOf(OrderPhase.PAID, OrderPhase.CANCELLED, OrderPhase.REJECTED,
+    OrderPhase.CLOSED, OrderPhase.COMPLETED, OrderPhase.REFUNDING, OrderPhase.REFUNDED)
 data class LocalOrder(
     val owner: String, val deviceName: String, val modeName: String, val amount: String,
     val payMethod: PayMethod, val phase: OrderPhase, val createdAt: Long = System.currentTimeMillis(),

@@ -94,6 +94,20 @@ class ProtocolTest {
         return "method=$method&biz_content=" + URLEncoder.encode(biz, "UTF-8") + "&sign=not-a-real-payment"
     }
     @Test fun acceptsSingleAlipayPaymentOnlyAtQuotedAmount() { PurchaseRules.verifyAlipay(alipay(), "4.00") }
+    @Test fun acceptsAlipayDocumentedDefaultProductCode() {
+        for (product in listOf("", ",\"product_code\":null", ",\"product_code\":\"\"")) {
+            val business = """{"total_amount":"1.00","out_trade_no":"local-test-trade"$product}"""
+            val payload = "method=alipay.trade.app.pay&biz_content=" + URLEncoder.encode(business, "UTF-8") + "&sign=local-test-only"
+            PurchaseRules.verifyAlipay(payload, "1.00")
+        }
+    }
+    @Test fun defaultProductNeverAllowsContractsOrUnknownProducts() {
+        for (extra in listOf(",\"agreement_sign_params\":{}", ",\"product_code\":\"CYCLE_PAY_AUTH\"",
+            ",\"product_code\":\"FAST_INSTANT_TRADE_PAY\"", ",\"product_code\":{}")) {
+            val payload = "method=alipay.trade.app.pay&biz_content=" + URLEncoder.encode("""{"total_amount":"1.00"$extra}""", "UTF-8")
+            assertThrows(ClientError::class.java) { PurchaseRules.verifyAlipay(payload, "1.00") }
+        }
+    }
     @Test fun rejectsContractsAndChangedPaymentAmounts() {
         assertThrows(ClientError::class.java) { PurchaseRules.verifyAlipay(alipay(extra = ""","agreement_sign_params":{}"""), "4.00") }
         assertThrows(ClientError::class.java) { PurchaseRules.verifyAlipay(alipay(extra = ""","nested":{"period_rule_params":{}}"""), "4.00") }

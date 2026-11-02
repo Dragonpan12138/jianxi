@@ -4,7 +4,15 @@
 
 [GitHub 源码](https://github.com/xiyuchengxu/jianxi) · [问题反馈](https://github.com/xiyuchengxu/jianxi/issues) · [MIT 开源协议](LICENSE)
 
-当前版本 **0.1.9**，支持 Android 8.0（API 26）及以上系统。包名 `dev.rain.laundry`，可与原版并存，并可覆盖安装此前测试版。本项目与原服务平台无隶属关系。
+当前版本 **0.1.10**，支持 Android 8.0（API 26）及以上系统。包名 `dev.rain.laundry`，可与原版并存，并可覆盖安装此前测试版。本项目与原服务平台无隶属关系。
+
+## 0.1.10 付款默认值与超时订单恢复
+
+支付宝 App 支付参数省略 `product_code` 时，按[支付宝官方模型的默认值](https://github.com/alipay/alipay-sdk-java-all/blob/master/v2/src/main/java/com/alipay/api/domain/AlipayTradeAppPayModel.java)处理为普通 App 支付，继续核对付款方式、金额及签约内容。显式返回未知产品码时仍停止，并显示经过筛选的产品码供适配。
+
+订单页通过 `order/detail` 核对订单身份与状态。服务端确认订单已关闭后，移除继续付款和取消入口，解除这笔旧单对下一次洗衣的本地限制。取消过程中收到 3122 会再次查询详情；已完成、退款中、已退款也会显示各自状态。没有服务器确认时保留未完成记录。
+
+升级后先在订单页点击“刷新订单状态”，再根据结果重新选择洗衣模式。60 项 JVM 单元测试及 6 项 Android 运行测试通过；模拟器中的支付交付测试在真实 SDK 入口前截获，不代表真实支付宝付款成功。
 
 ## 0.1.9 支付渠道机构编号
 
@@ -85,9 +93,9 @@ Android 10 及以上保存到相册，较早系统使用系统文件保存窗口
 - 在创建前再次向后端核对报价。金额或项目变动时需要重新确认。
 - 创建订单前先保存本地尝试记录。创建请求不自动重试；网络中断导致结果不明时保留“下单结果待确认”，阻止继续创建第二笔订单。服务端明确拒绝下单时显示“下单未成功”，允许重新选择和确认。
 - 已知订单的支付宝继续付款复用原订单号。余额扣款请求发出后若结果不明，只查询状态，不重复扣款。
-- SDK 返回 `9000` 不直接当作已付款，最终状态以 `order/pay_status` 的布尔结果为准。
+- SDK 返回 `9000` 不直接当作已付款，付款及订单状态通过后端 `order/pay_status` 和 `order/detail` 核对。
 - 设备同步请求和“机器已经启动”是不同状态，界面不会把请求发送成功当作已经启动。
-- 取消订单先查询是否付款；仅在后端成功确认取消后解除本地未完成订单限制。
+- 取消订单先核对详情及付款状态；后端确认取消或详情明确为已关闭时，解除本地未完成订单限制。
 - 如果创建请求结果不明且没有拿到订单号，当前版本需要先在原应用核对订单。此版本没有猜测订单号或自行解除这项限制的入口。
 
 ## 构建
@@ -139,6 +147,7 @@ adb -s emulator-5558 shell am instrument -w -r -e class dev.rain.laundry.LocalRu
 | `core/Protocol.kt` | 二维码、签名、报价和支付参数核对 |
 | `core/OrderWorkflow.kt` | 防重复下单及未知结果持久化 |
 | `core/PaymentWorkflow.kt` | 首次付款与继续付款的顺序、余额结果未知时的等待 |
+| `core/OrderStates.kt` | 服务端订单状态同步与已关闭订单恢复 |
 | `data/SessionVault.kt` | Android Keystore 加密会话及订单 |
 | `data/LaundryApi.kt` | 限定业务范围的网络接口 |
 

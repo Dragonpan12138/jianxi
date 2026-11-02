@@ -130,7 +130,15 @@ object PurchaseRules {
             else -> false
         }
         if (containsContract(business) || args.keys.any { it in forbidden }) throw ClientError("付款包含签约内容，已停止")
-        if (business.text("product_code") != "QUICK_MSECURITY_PAY") throw ClientError("暂不支持此支付宝支付产品")
+        // AlipayTradeAppPayModel documents QUICK_MSECURITY_PAY as the omitted product_code default.
+        val rawProduct = business.get("product_code")?.takeUnless { it.isJsonNull }
+        if (rawProduct != null && (!rawProduct.isJsonPrimitive || !rawProduct.asJsonPrimitive.isString))
+            throw ClientError("支付宝支付产品码格式尚未适配")
+        val product = rawProduct?.asString.orEmpty()
+        if (product.isNotEmpty() && product != "QUICK_MSECURITY_PAY") {
+            val diagnostic = product.takeIf { it.matches(Regex("[A-Za-z0-9_]{1,64}")) } ?: "未知格式"
+            throw ClientError("暂不支持此支付宝支付产品（产品码：$diagnostic）")
+        }
         if (money(business.text("total_amount")) != money(expectedAmount)) throw ClientError("支付金额与确认金额不一致")
     }
 }

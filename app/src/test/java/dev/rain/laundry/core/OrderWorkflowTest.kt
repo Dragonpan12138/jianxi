@@ -59,4 +59,13 @@ class OrderWorkflowTest {
         val result = OrderWorkflow(fake, { saved }, { saved = it }).create(accepted, PayMethod.ALIPAY, location, "owner", PayRoute(PayMethod.ALIPAY, "route-1", "voucher-1"))
         assertEquals("route-1", result.thirdChannel); assertEquals("voucher-1", saved?.outVoucherId)
     }
+    @Test fun confirmedClosedOrderDoesNotBlockANewExplicitlyConfirmedWash() = runTest {
+        val fake = Fake(accepted)
+        var saved: LocalOrder? = LocalOrder("owner", "old", "old", "1.00", PayMethod.ALIPAY,
+            OrderPhase.CLOSED, orderId = "old-id", orderNo = "old-trade")
+        val created = OrderWorkflow(fake, { saved }, { saved = it }).create(accepted, PayMethod.ALIPAY, location, "owner")
+        assertEquals(1, fake.creates)
+        assertEquals(OrderPhase.CREATED, created.phase)
+        assertEquals("id1", created.orderId)
+    }
 }

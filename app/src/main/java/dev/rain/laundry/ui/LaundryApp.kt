@@ -248,6 +248,7 @@ private fun OrdersScreen(state: UiState, refresh: () -> Unit, resume: () -> Unit
     val paid = order.phase == OrderPhase.PAID
     val cancelled = order.phase == OrderPhase.CANCELLED
     val rejected = order.phase == OrderPhase.REJECTED
+    val closed = order.phase == OrderPhase.CLOSED
     var cancelDialog by remember { mutableStateOf(false) }
     HeroIcon(if (paid) Icons.Outlined.CheckCircle else Icons.Outlined.Schedule)
     Text(when (order.phase) {
@@ -257,8 +258,12 @@ private fun OrdersScreen(state: UiState, refresh: () -> Unit, resume: () -> Unit
         OrderPhase.PAYMENT_PENDING -> "付款结果待确认"
         OrderPhase.CANCELLED -> "订单已取消"
         OrderPhase.REJECTED -> "下单未成功"
+        OrderPhase.CLOSED -> "订单已关闭"
+        OrderPhase.COMPLETED -> "订单已完成"
+        OrderPhase.REFUNDING -> "退款处理中"
+        OrderPhase.REFUNDED -> "订单已退款"
     }, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
-    Text(if (paid) "请查看洗衣机是否已经启动。" else if (cancelled || rejected) "可以返回洗衣，重新选择模式。" else if (order.orderNo.isBlank()) "请先在原应用核对这笔订单，避免重复下单。" else if (order.phase == OrderPhase.CREATED) "订单已创建，可以继续付款；若已在原应用付款，请刷新状态。" else "付款结果尚未确认，请先查询订单状态。",
+    Text(if (closed) "订单已超时或失效，可以返回洗衣重新选择模式。" else if (order.phase == OrderPhase.COMPLETED) "本次洗衣已结束。" else if (order.phase == OrderPhase.REFUNDING) "平台正在处理退款，请在原应用查看进度。" else if (order.phase == OrderPhase.REFUNDED) "平台已标记退款完成，请核对到账情况。" else if (paid) "请查看洗衣机运行状态。" else if (cancelled || rejected) "可以返回洗衣，重新选择模式。" else if (order.orderNo.isBlank()) "请先在原应用核对这笔订单，避免重复下单。" else if (order.phase == OrderPhase.CREATED) "订单已创建，可以继续付款；若已在原应用付款，请刷新状态。" else "付款结果尚未确认，请先查询订单状态。",
         color = MaterialTheme.colorScheme.onSurfaceVariant)
     Card(shape = RoundedCornerShape(28.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)) {
         Column(Modifier.fillMaxWidth().padding(24.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {
@@ -269,12 +274,12 @@ private fun OrdersScreen(state: UiState, refresh: () -> Unit, resume: () -> Unit
         }
     }
     if (order.orderNo.isNotBlank() && !cancelled) OutlinedButton(onClick = refresh, enabled = !state.busy, modifier = Modifier.fillMaxWidth().height(54.dp)) { Text("刷新订单状态") }
-    if (!paid && !cancelled && order.orderNo.isNotBlank() && (order.payMethod == PayMethod.ALIPAY || order.phase == OrderPhase.CREATED))
+    if (!order.phase.finished && order.orderNo.isNotBlank() && (order.payMethod == PayMethod.ALIPAY || order.phase == OrderPhase.CREATED))
         Button(onClick = resume, enabled = !state.busy, modifier = Modifier.fillMaxWidth().height(54.dp)) { Text("继续付款") }
-    if (!paid && !cancelled && order.orderId.isNotBlank()) TextButton(onClick = { cancelDialog = true }, enabled = !state.busy) { Text("取消未付款订单") }
+    if (!order.phase.finished && order.orderId.isNotBlank()) TextButton(onClick = { cancelDialog = true }, enabled = !state.busy) { Text("取消未付款订单") }
     Text("这里保留本机最近一笔订单。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     if (cancelDialog) AlertDialog(onDismissRequest = { cancelDialog = false }, title = { Text("取消这笔订单？") },
-        text = { Text("会先查询付款状态，确认未付款后申请取消。") },
+        text = { Text("会先核对订单详情和付款状态，确认订单仍可取消后再申请。") },
         confirmButton = { TextButton(onClick = { cancelDialog = false; cancel() }) { Text("确认取消") } },
         dismissButton = { TextButton(onClick = { cancelDialog = false }) { Text("保留订单") } })
 }
