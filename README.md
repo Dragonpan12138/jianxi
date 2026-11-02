@@ -4,7 +4,13 @@
 
 [GitHub 源码](https://github.com/xiyuchengxu/jianxi) · [问题反馈](https://github.com/xiyuchengxu/jianxi/issues) · [MIT 开源协议](LICENSE)
 
-当前版本 **0.1.6**，支持 Android 8.0（API 26）及以上系统。包名 `dev.rain.laundry`，可与原版并存，并可覆盖安装此前测试版。本项目与原服务平台无隶属关系。
+当前版本 **0.1.7**，支持 Android 8.0（API 26）及以上系统。包名 `dev.rain.laundry`，可与原版并存，并可覆盖安装此前测试版。本项目与原服务平台无隶属关系。
+
+## 0.1.7 模拟器验证与底栏避让
+
+在 Android 官方模拟器 Android 15 / API 35 上运行实际 APK，验证登录界面、关于页、离线 MIT 协议、粘贴设备码、模式选择、报价、支付方式展示及底栏按压切换。修正付款页按钮被悬浮底栏遮挡的问题：在滚动区域外预留底栏空间，滚动到底部后可完整看到确认支付按钮。
+
+3 项 Android 运行测试及 49 项 JVM 单元测试通过。运行测试以本地响应覆盖空优惠列表、已选未知优惠和异常结构，未使用真实账户、未发送短信、未创建订单或付款；真实服务端兼容性仍需设备空闲后复测。
 
 ## 0.1.6 报价空值兼容
 
@@ -81,6 +87,19 @@
 ```
 
 Windows 使用 `gradlew.bat`。测试 APK 位于 `app/build/outputs/apk/debug/app-debug.apk`。源码包不含 Android SDK、构建缓存、账号数据或个人发布密钥。`development-debug.p12` 是随本项目公开提供的开发测试签名，密码为 `android`，用于后续测试版本覆盖升级；它不是正式发布签名，正式发布签名尚未配置。
+
+### 本地 Android 运行测试
+
+测试代码位于 `app/src/androidTest/java/dev/rain/laundry/LocalRuntimeTest.kt`。请使用未登录任何账户的独立官方模拟器，Android 15 / API 35、x86_64 默认系统镜像。本次使用的模拟器序列号为 `emulator-5558`；自行运行时替换为自己的模拟器序列号。
+
+```sh
+./gradlew :app:assembleDebug :app:assembleDebugAndroidTest
+adb -s emulator-5558 install -r app/build/outputs/apk/debug/app-debug.apk
+adb -s emulator-5558 install -r app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
+adb -s emulator-5558 shell am instrument -w -r -e class dev.rain.laundry.LocalRuntimeTest dev.rain.laundry.test/androidx.test.runner.AndroidJUnitRunner
+```
+
+业务测试只在测试 APK 中替换网络客户端，通过 OkHttp 拦截器直接返回合成响应，不调用 `chain.proceed`。正式 APK 不含模拟账户和假响应。测试不会点击确认支付；截图保存在模拟器的 `/sdcard/Android/data/dev.rain.laundry/files/runtime-checks/`。
 
 ## 协议来源与实现范围
 

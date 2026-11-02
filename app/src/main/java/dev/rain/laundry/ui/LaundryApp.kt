@@ -76,8 +76,11 @@ fun LaundryApp(vm: LaundryViewModel, onScan: () -> Unit, onPay: () -> Unit) {
                     if (state.loggedIn) TextButton(onClick = { logoutOpen = true }, enabled = !state.busy) { Text("退出") }
                 }, colors = TopAppBarDefaults.topAppBarColors(containerColor = colors.background))
             }, snackbarHost = { SnackbarHost(snackbar, Modifier.padding(bottom = if (state.loggedIn) 92.dp else 0.dp)) }) { padding ->
-                Column(Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).imePadding()
-                    .padding(horizontal = 24.dp).padding(top = 12.dp, bottom = if (state.loggedIn) 108.dp else 28.dp),
+                Column(Modifier.fillMaxSize().padding(padding)
+                    // Reserve the floating bar outside the scroll viewport so actions cannot sit underneath it.
+                    .padding(bottom = if (state.loggedIn) 96.dp else 0.dp)
+                    .verticalScroll(rememberScrollState()).imePadding()
+                    .padding(horizontal = 24.dp).padding(top = 12.dp, bottom = 28.dp),
                     horizontalAlignment = Alignment.CenterHorizontally) {
                     Column(Modifier.widthIn(max = 520.dp).fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(22.dp)) {
                         if (state.busy) {
