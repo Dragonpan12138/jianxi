@@ -170,13 +170,15 @@ class LocalRuntimeTest {
                     val fields = body?.let { form -> (0 until form.size).associate { form.name(it) to form.value(it) } }.orEmpty()
                     val response = when (path) {
                         "/goods/scan/v2" -> """{"code":0,"data":{"id":"local-device","categoryCode":"00"}}"""
-                        "/goods/normal/details" -> """{"code":0,"data":{"goodsId":"local-device","name":"本地测试洗衣机","imei":"LOCAL-TEST-IMEI","categoryCode":"00","shopId":"local-shop","orgId":"local-org","payment":"before","isBluetooth":0,"remainTime":0}}"""
+                        "/goods/normal/details" -> """{"code":0,"data":{"goodsId":"local-device","name":"本地测试洗衣机","imei":"LOCAL-TEST-IMEI","categoryCode":"00","shopId":"b6da19d1-118b-4f68-967a-000000000001","orgId":3100001,"payment":"before","isBluetooth":0,"remainTime":0}}"""
                         "/goods/normal/skus" -> """{"code":0,"data":[{"skuId":"local-sku","name":"标准洗","price":"4.00","scanAvailable":true}]}"""
                         "/appoint/checkMachineCanUse" -> """{"code":0,"data":true}"""
-                        "/trade/preview/v4" -> if (fields["isAutoSelectPromotion"] == "0" && fields["forbiddenPromotions"]?.contains("local-org") == true)
+                        "/trade/preview/v4" -> if (fields["isAutoSelectPromotion"] == "0" && fields["forbiddenPromotions"]?.contains("3100001") == true)
                             """{"code":0,"data":{"realPrice":"4.00","tradeType":null,"items":[{"goodsId":"local-device","skuId":"local-sku","amount":1}],"promotions":$promotions}}"""
                         else """{"code":1,"msg":"本地测试：报价参数不正确"}"""
-                        "/payChannelRoute/prePay" -> """{"code":0,"data":[{"method":13,"autoPayState":0},{"method":2,"autoPayState":0}]}"""
+                        "/payChannelRoute/prePay" -> if (fields["shopId"] == "3100001" && fields["goodsId"] == "local-device" && fields["imei"] == "LOCAL-TEST-IMEI")
+                            """{"code":0,"data":[{"method":13,"autoPayState":0},{"method":2,"autoPayState":0}]}"""
+                        else """{"code":1,"msg":"Failed to convert property 'shopId' to java.lang.Long"}"""
                         else -> """{"code":1,"msg":"本地测试已阻止非预期接口"}"""
                     }
                     // Never call chain.proceed: no request reaches a socket or the production service.

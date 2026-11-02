@@ -27,6 +27,7 @@ class LaundryApi(
             "appoint/checkMachineCanUse" to "核对设备状态失败",
             "trade/preview/v4" to "核对洗衣金额失败",
             "trade/create" to "创建订单失败",
+            "payChannelRoute/prePay" to "获取支付方式失败",
             "pay/unify/prePay" to "获取支付信息失败",
             "pay/unify/pay" to "余额付款未完成",
             "order/pay_status" to "查询付款状态失败",
@@ -137,8 +138,12 @@ class LaundryApi(
     }
     suspend fun channels(quote: Quote): List<PayRoute> {
         val device = quote.device
+        // APK 1.144.0: OrderPayPreviewAct -> PayModeFragment passes orgId, despite the wire name shopId.
+        val channelShopId = device.orgId
+        if (channelShopId.toLongOrNull() == null)
+            throw ClientError("设备机构编号无效，请重新扫码识别设备")
         val result = post("payChannelRoute/prePay", mapOf("imei" to device.imei, "goodsId" to device.id,
-            "hitAd" to "0", "payPrice" to quote.amount, "useTicket" to "0", "shopId" to device.shopId,
+            "hitAd" to "0", "payPrice" to quote.amount, "useTicket" to "0", "shopId" to channelShopId,
             "combineOrderStatus" to "false", "confirmSelectedStatus" to "false"))
         if (!result.isJsonArray) throw ClientError("支付渠道响应格式尚未适配")
         val supported = result.asJsonArray.mapNotNull {

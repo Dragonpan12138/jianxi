@@ -158,9 +158,60 @@ class LaundryApiTest {
         val error = runCatching { api.post("goods/normal/details", mapOf("goodsId" to "g1")) }.exceptionOrNull()
         assertTrue(error is BusinessRejected); assertFalse(error is SessionExpired)
     }
+    @Test fun paymentChannelsUseOrgIdRatherThanDeviceShopId() = runTest {
+        // Original OrderPayPreviewAct -> PayModeFragment passes orgId into the wire field named shopId.
+        val physicalShopId = "b6da19d1-118b-4f68-967a-000000000001"
+        val orgId = "7234567890123456789" // Preserve identifiers beyond Double's exact integer range.
+        for (orgJson in listOf(orgId, "\"$orgId\"")) {
+            server.dispatcher = object : okhttp3.mockwebserver.Dispatcher() {
+                override fun dispatch(request: RecordedRequest): MockResponse {
+                    val response = when (request.path) {
+                        "/goods/scan/v2" -> """{"code":0,"data":{"id":"g1","categoryCode":"00"}}"""
+                        "/goods/normal/details" -> """{"code":0,"data":{"goodsId":"g1","imei":"test-imei","categoryCode":"00","shopId":"$physicalShopId","orgId":$orgJson}}"""
+                        "/goods/normal/skus" -> """{"code":0,"data":[{"skuId":"s1","name":"单脱水","price":"1.00"}]}"""
+                        "/appoint/checkMachineCanUse" -> """{"code":0,"data":true}"""
+                        "/trade/preview/v4" -> """{"code":0,"data":{"realPrice":"1.00","items":[{"goodsId":"g1","skuId":"s1","amount":1}],"promotions":null}}"""
+                        "/payChannelRoute/prePay" -> {
+                            val fields = request.body.clone().readUtf8().split('&').associate {
+                                URLDecoder.decode(it.substringBefore('='), "UTF-8") to URLDecoder.decode(it.substringAfter('='), "UTF-8")
+                            }
+                            if (fields["shopId"] == orgId)
+                                """{"code":0,"data":[{"method":13,"autoPayState":0},{"method":2,"autoPayState":0}]}"""
+                            else """{"code":1,"msg":"Failed to convert property value of type 'java.lang.String' to required type 'java.lang.Long' for property 'shopId'"}"""
+                        }
+                        else -> """{"code":1,"msg":"Unexpected endpoint"}"""
+                    }
+                    return MockResponse().setBody(response)
+                }
+            }
+            val device = api.device(DeviceCode("SN", "test-serial"))
+            assertEquals(physicalShopId, device.shopId)
+            assertEquals(orgId, device.orgId)
+            val quote = api.quote(device, device.modes.single())
+            assertEquals(listOf(PayMethod.ALIPAY, PayMethod.BALANCE), api.channels(quote).map { it.method })
+            assertEquals(listOf("/goods/scan/v2", "/goods/normal/details", "/goods/normal/skus",
+                "/appoint/checkMachineCanUse", "/trade/preview/v4", "/payChannelRoute/prePay"),
+                List(6) { server.takeRequest().path })
+        }
+        assertEquals(12, server.requestCount)
+    }
+    @Test fun invalidOrgIdStopsBeforeRequestingPaymentChannels() = runTest {
+        server.dispatcher = object : okhttp3.mockwebserver.Dispatcher() {
+            override fun dispatch(request: RecordedRequest) = MockResponse()
+                .setBody("""{"code":0,"data":[{"method":13,"autoPayState":0}]}""")
+        }
+        for (orgId in listOf("", "org-uuid", "1.5", "9223372036854775808")) {
+            val quote = Quote(Device("g1", "test", "test-imei", "00", "physical-shop", orgId, 0, emptyList()),
+                WashMode("s1", "单脱水", "1.00"), "1.00", "[]", 0)
+            val error = runCatching { api.channels(quote) }.exceptionOrNull()
+            assertTrue(error is ClientError)
+            assertTrue(error?.message.orEmpty().contains("机构编号"))
+        }
+        assertEquals(0, server.requestCount)
+    }
     @Test fun routedPaymentKeepsItsChannelAndVoucherParameters() = runTest {
         server.enqueue(MockResponse().setBody("""{"code":0,"data":[{"method":13,"autoPayState":0,"thirdChannel":"route-1","outVoucherId":"voucher-1"},{"method":2,"autoPayState":0},{"method":13,"autoPayState":1}]}"""))
-        val quote = Quote(Device("g", "test", "1234", "00", "shop", "org", 0, emptyList()), WashMode("s", "wash", "4"), "4.00", "[]", 1)
+        val quote = Quote(Device("g", "test", "1234", "00", "shop", "3100001", 0, emptyList()), WashMode("s", "wash", "4"), "4.00", "[]", 1)
         val routes = api.channels(quote)
         val route = routes.single { it.method == PayMethod.ALIPAY }
         assertEquals("route-1", route.thirdChannel)
@@ -182,9 +233,10 @@ class LaundryApiTest {
         assertTrue(uncertain is ClientError); assertFalse(uncertain is BusinessRejected)
     }
     @Test fun parameterRejectionsIdentifyTheActualPaymentStep() = runTest {
-        val quote = Quote(Device("g", "test", "1234", "00", "shop", "org", 0, emptyList()), WashMode("s", "wash", "4"), "4.00", "[]", 1)
+        val quote = Quote(Device("g", "test", "1234", "00", "shop", "3100001", 0, emptyList()), WashMode("s", "wash", "4"), "4.00", "[]", 1)
         val order = LocalOrder("owner", "test", "wash", "4.00", PayMethod.ALIPAY, OrderPhase.CREATED, orderNo = "trade1")
         val cases = listOf<Pair<String, suspend () -> Unit>>(
+            "获取支付方式失败" to { api.channels(quote); Unit },
             "创建订单失败" to { api.create(quote, LocationFix(30.2, 120.1)); Unit },
             "获取支付信息失败" to { api.prepay(order); Unit },
             "查询付款状态失败" to { api.paid(order); Unit }
