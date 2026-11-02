@@ -9,4 +9,5 @@ local.properties
 .tools/
 artifacts/
 *.log
+*.apk
 .DS_Store

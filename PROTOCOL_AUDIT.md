@@ -1,4 +1,20 @@
-# 0.1.1 接口与流程复查
+# 接口与流程复查
+
+## 0.1.4 付款阶段复查
+
+复查日期：2026-11-02。离线核对用户本次提供的胖乖生活 1.144.0（versionCode 294）APK。用户照片中的二维码可解码为 NQT 参数，现有解析器支持该类型；未将真实设备标识写入公开测试或文档。
+
+| 环节 | 原版证据 | 本轮处理 |
+|---|---|---|
+| 创建后的首次付款 | `OrderPayPreviewAct.createObserver$lambda$39` 调用 `PayModeFragment.appPay`；后者直接进入余额付款或 `PayModeVm.prePay` | 修正原先在新订单后先请求 `order/pay_status` 的顺序。`CREATED` 状态直接初始化付款；`PAYMENT_PENDING` 才按恢复付款规则先查状态 |
+| 预支付与查询 | `PayModeVm.prePay`、`PayStateVm.queryPayStatus` | 再次核对 `orderNo/payType/againFlag` 及路由字段。保留原订单号，余额未知结果只查询、不重复提交扣款 |
+| 创建表单与请求头 | `OrderPayPreviewVm.createOrder`、`ApiService.orderCreate`、`HeadInterceptor` | 核对 `items/promotions`、设备与定位请求头、风控时间戳及 SHA-256 签名。只根据离线证据核对，没有向真实设备提交订单 |
+| 项目参数 | `WashSkuAct.toOrder`、`OrderPreviewQuest` 默认构造器 | 核对默认数量与商品字段；普通洗衣的空 `price` 与 `soldType=1` 为原版默认值，未据报错猜改这些字段 |
+| 报错定位 | 当前客户端错误处理 | 为付款相关业务拒绝补充操作阶段与服务端错误码，区分创建、获取支付信息和查询状态失败 |
+
+此次没有真实接口错误响应或抓包，因此“支付初始化前查询状态”是已确认的流程差异，不等于已经证明它就是本次“参数不正确”的服务器原因。设备正在使用，本轮仅执行本机模拟测试；需待设备空闲后验证实际结果。
+
+## 0.1.1 接口与流程复查
 
 复查日期：2026-11-02。依据用户提供的原版 APK 1.144.0 的 Retrofit 注解、调用页面、ViewModel、数据模型及 DEX 指令，逐项核对本客户端。以下不是生产服务器流量记录。
 

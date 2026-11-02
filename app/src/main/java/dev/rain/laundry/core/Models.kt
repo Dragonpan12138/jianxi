@@ -26,7 +26,10 @@ data class LocalOrder(
     val thirdChannel: String? = null, val outVoucherId: String? = null
 )
 open class ClientError(message: String) : Exception(message)
-class BusinessRejected(val code: Int, message: String) : ClientError(message)
+class BusinessRejected(val code: Int, message: String, val operation: String? = null) : ClientError(message) {
+    val displayMessage: String
+        get() = operation?.let { "$it：$message（错误码 $code）" } ?: message.orEmpty()
+}
 class SessionExpired : Exception("登录已过期，请重新登录")
 
 fun money(raw: String): String {

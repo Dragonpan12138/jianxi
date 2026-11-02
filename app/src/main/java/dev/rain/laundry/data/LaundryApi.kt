@@ -23,6 +23,15 @@ class LaundryApi(
         val ALLOWED_PATHS = setOf("common/sms/sendCode", "user/reg", "goods/scan/v2", "goods/normal/details",
             "goods/normal/skus", "trade/preview/v4", "trade/create", "payChannelRoute/prePay",
             "pay/unify/prePay", "pay/unify/pay", "order/pay_status", "order/sync", "order/cancel", "appoint/checkMachineCanUse")
+        private val PAYMENT_OPERATIONS = mapOf(
+            "appoint/checkMachineCanUse" to "核对设备状态失败",
+            "trade/preview/v4" to "核对洗衣金额失败",
+            "trade/create" to "创建订单失败",
+            "pay/unify/prePay" to "获取支付信息失败",
+            "pay/unify/pay" to "余额付款未完成",
+            "order/pay_status" to "查询付款状态失败",
+            "order/cancel" to "取消订单失败"
+        )
     }
 
     suspend fun post(path: String, fields: Map<String, String>, risk: Pair<Device, LocationFix>? = null): JsonElement = withContext(Dispatchers.IO) {
@@ -51,7 +60,7 @@ class LaundryApi(
         try {
             client.newCall(request.build()).execute().use { response ->
                 if (response.code == 401 && !anonymous) throw SessionExpired()
-                if (response.code == 403) throw BusinessRejected(403, "本次请求被平台拒绝，请稍后重试（403）")
+                if (response.code == 403) throw BusinessRejected(403, "本次请求被平台拒绝，请稍后重试（403）", PAYMENT_OPERATIONS[path])
                 if (!response.isSuccessful) throw ClientError("服务暂时不可用（${response.code}）")
                 val body = response.body ?: throw ClientError("服务器没有返回内容")
                 if (body.contentLength() > 2_000_000) throw ClientError("服务器返回内容过大")
@@ -64,7 +73,7 @@ class LaundryApi(
                     val message = root.text("msg", "请求失败（$code）").take(180)
                     if (!anonymous && (code == 401 || message in setOf("未登录", "登录已过期", "登录失效", "请重新登录"))) throw SessionExpired()
                     if (code == 2128 && path == "goods/normal/skus") throw BusinessRejected(code, "此设备存在未支付订单，请先在原应用处理")
-                    throw BusinessRejected(code, message)
+                    throw BusinessRejected(code, message, PAYMENT_OPERATIONS[path])
                 }
                 root.get("data") ?: JsonNull.INSTANCE
             }

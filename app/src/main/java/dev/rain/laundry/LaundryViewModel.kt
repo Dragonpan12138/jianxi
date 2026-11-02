@@ -31,6 +31,15 @@ class LaundryViewModel(application: Application) : AndroidViewModel(application)
     private var smsJob: Job? = null
     val paymentLaunches = launchChannel.receiveAsFlow()
     private val workflow = OrderWorkflow(api, { _state.value.order }, ::saveOrder)
+    private val paymentWorkflow = PaymentWorkflow(
+        queryPaid = { order ->
+            _state.update { it.copy(progress = "正在查询付款状态") }
+            api.paid(order)
+        },
+        onPaid = ::confirmPaid,
+        startPayment = ::payExisting,
+        onBalancePending = { notice("余额付款结果尚未确认，请稍后刷新订单") }
+    )
     private fun saveOrder(order: LocalOrder) { vault.saveOrder(order); _state.update { it.copy(order = order) } }
     fun clearMessage() { _state.update { it.copy(message = null) } }
     fun notice(message: String) { _state.update { it.copy(message = message) } }
@@ -46,7 +55,11 @@ class LaundryViewModel(application: Application) : AndroidViewModel(application)
             catch (e: CancellationException) { throw e }
             catch (_: SessionExpired) { vault.logout(); _state.update { UiState(message = "登录已过期，请重新登录") } }
             catch (e: QuoteChanged) { _state.update { it.copy(quote = e.quote, message = "价格已更新，请重新确认", page = Page.CHECKOUT) } }
-            catch (e: Exception) { notice(if (e is ClientError) e.message.orEmpty() else "暂时无法处理这份数据，请稍后重试") }
+            catch (e: Exception) { notice(when (e) {
+                is BusinessRejected -> e.displayMessage
+                is ClientError -> e.message.orEmpty()
+                else -> "暂时无法处理这份数据，请稍后重试"
+            }) }
             finally { _state.update { it.copy(busy = false, progress = "") } }
         }
     }
@@ -92,21 +105,18 @@ class LaundryViewModel(application: Application) : AndroidViewModel(application)
             val order = try { workflow.create(quote, method.method, fix, vault.owner(), route = method) }
             catch (e: Exception) { if (state.value.order?.phase == OrderPhase.UNCONFIRMED) _state.update { it.copy(page = Page.ORDERS) }; throw e }
             _state.update { it.copy(page = Page.ORDERS) }
-            if (api.paid(order)) confirmPaid(order) else payExisting(order)
+            paymentWorkflow.startOrResume(order)
         }
     }
     fun resumePayment() {
         val order = state.value.order ?: return
         if (order.orderNo.isEmpty() || order.phase.finished) return
         work("正在核对付款状态") {
-            if (api.paid(order)) { confirmPaid(order); return@work }
-            if (order.payMethod == PayMethod.BALANCE && order.phase == OrderPhase.PAYMENT_PENDING) {
-                notice("余额付款结果尚未确认，请稍后刷新订单"); return@work
-            }
-            payExisting(order)
+            paymentWorkflow.startOrResume(order)
         }
     }
     private suspend fun payExisting(order: LocalOrder) {
+        _state.update { it.copy(progress = if (order.payMethod == PayMethod.BALANCE) "正在提交余额付款" else "正在获取支付信息") }
         if (order.payMethod == PayMethod.BALANCE) {
             val pending = order.copy(phase = OrderPhase.PAYMENT_PENDING); saveOrder(pending)
             api.balancePay(pending)
@@ -132,7 +142,7 @@ class LaundryViewModel(application: Application) : AndroidViewModel(application)
         val order = state.value.order ?: return
         if (order.orderId.isBlank() || order.phase in setOf(OrderPhase.PAID, OrderPhase.CANCELLED)) return
         work("正在取消订单") {
-            if (api.paid(order)) { confirmPaid(order); return@work }
+            if (order.phase != OrderPhase.CREATED && api.paid(order)) { confirmPaid(order); return@work }
             api.cancel(order)
             saveOrder(order.copy(phase = OrderPhase.CANCELLED))
             notice("订单已取消")
@@ -141,6 +151,7 @@ class LaundryViewModel(application: Application) : AndroidViewModel(application)
     fun refreshOrder() {
         val order = state.value.order ?: return
         if (order.orderNo.isBlank()) { notice("上一次下单结果未确认，请先在原应用核对订单"); return }
+        if (order.phase == OrderPhase.CREATED) { notice("这笔订单尚未发起付款，可以继续付款或取消订单"); return }
         work("正在查询订单") { if (api.paid(order)) confirmPaid(order) else notice("尚未确认付款，可稍后再次查询") }
     }
     private suspend fun poll(order: LocalOrder) {

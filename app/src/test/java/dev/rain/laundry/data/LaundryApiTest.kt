@@ -146,4 +146,19 @@ class LaundryApiTest {
         val uncertain = runCatching { api.create(quote, LocationFix(30.2, 120.1)) }.exceptionOrNull()
         assertTrue(uncertain is ClientError); assertFalse(uncertain is BusinessRejected)
     }
+    @Test fun parameterRejectionsIdentifyTheActualPaymentStep() = runTest {
+        val quote = Quote(Device("g", "test", "1234", "00", "shop", "org", 0, emptyList()), WashMode("s", "wash", "4"), "4.00", "[]", 1)
+        val order = LocalOrder("owner", "test", "wash", "4.00", PayMethod.ALIPAY, OrderPhase.CREATED, orderNo = "trade1")
+        val cases = listOf<Pair<String, suspend () -> Unit>>(
+            "创建订单失败" to { api.create(quote, LocationFix(30.2, 120.1)); Unit },
+            "获取支付信息失败" to { api.prepay(order); Unit },
+            "查询付款状态失败" to { api.paid(order); Unit }
+        )
+        for ((operation, request) in cases) {
+            server.enqueue(MockResponse().setBody("""{"code":1001,"msg":"参数不正确","data":null}"""))
+            val error = runCatching { request() }.exceptionOrNull() as BusinessRejected
+            assertEquals(operation, error.operation)
+            assertEquals("$operation：参数不正确（错误码 1001）", error.displayMessage)
+        }
+    }
 }
