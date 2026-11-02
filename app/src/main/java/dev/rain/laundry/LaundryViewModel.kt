@@ -142,7 +142,7 @@ class LaundryViewModel(application: Application) : AndroidViewModel(application)
         val order = state.value.order ?: return
         if (order.orderId.isBlank() || order.phase in setOf(OrderPhase.PAID, OrderPhase.CANCELLED)) return
         work("正在取消订单") {
-            if (order.phase != OrderPhase.CREATED && api.paid(order)) { confirmPaid(order); return@work }
+            if (api.paid(order)) { confirmPaid(order); return@work }
             api.cancel(order)
             saveOrder(order.copy(phase = OrderPhase.CANCELLED))
             notice("订单已取消")
@@ -151,7 +151,6 @@ class LaundryViewModel(application: Application) : AndroidViewModel(application)
     fun refreshOrder() {
         val order = state.value.order ?: return
         if (order.orderNo.isBlank()) { notice("上一次下单结果未确认，请先在原应用核对订单"); return }
-        if (order.phase == OrderPhase.CREATED) { notice("这笔订单尚未发起付款，可以继续付款或取消订单"); return }
         work("正在查询订单") { if (api.paid(order)) confirmPaid(order) else notice("尚未确认付款，可稍后再次查询") }
     }
     private suspend fun poll(order: LocalOrder) {

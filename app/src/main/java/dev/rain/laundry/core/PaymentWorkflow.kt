@@ -1,5 +1,7 @@
 package dev.rain.laundry.core
 
+import kotlinx.coroutines.CancellationException
+
 /** A CREATED order has not started payment yet; payment status is queried after initiation. */
 class PaymentWorkflow(
     private val queryPaid: suspend (LocalOrder) -> Boolean,
@@ -9,7 +11,15 @@ class PaymentWorkflow(
 ) {
     suspend fun startOrResume(order: LocalOrder) {
         if (order.phase == OrderPhase.CREATED) {
-            startPayment(order)
+            try {
+                startPayment(order)
+            } catch (error: BusinessRejected) {
+                // The same order may have been paid in the original client since it was created.
+                val paid = try { queryPaid(order) }
+                catch (cancelled: CancellationException) { throw cancelled }
+                catch (_: Exception) { false }
+                if (paid) onPaid(order) else throw error
+            }
             return
         }
         if (order.phase != OrderPhase.PAYMENT_PENDING) {

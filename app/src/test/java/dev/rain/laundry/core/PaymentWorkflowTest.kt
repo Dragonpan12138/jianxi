@@ -73,4 +73,29 @@ class PaymentWorkflowTest {
         )
         assertTrue(runCatching { flow.startOrResume(order(phase = OrderPhase.UNCONFIRMED)) }.exceptionOrNull() is ClientError)
     }
+
+    @Test fun externallyPaidOrderIsConfirmedAfterInitializationIsRejected() = runTest {
+        val calls = mutableListOf<String>()
+        val flow = PaymentWorkflow(
+            queryPaid = { calls.add("status:${it.orderNo}"); true },
+            onPaid = { calls.add("confirmed:${it.orderNo}") },
+            startPayment = { calls.add("prepay:${it.orderNo}"); throw BusinessRejected(1002, "订单已付款") },
+            onBalancePending = { fail("Already paid") }
+        )
+        flow.startOrResume(order())
+        assertEquals(listOf("prepay:trade1", "status:trade1", "confirmed:trade1"), calls)
+    }
+
+    @Test fun failedRecoveryQueryPreservesTheOriginalInitializationError() = runTest {
+        val original = BusinessRejected(1001, "参数不正确", "获取支付信息失败")
+        var starts = 0
+        val flow = PaymentWorkflow(
+            queryPaid = { throw BusinessRejected(1003, "尚无支付记录", "查询付款状态失败") },
+            onPaid = { fail("Not confirmed") },
+            startPayment = { starts++; throw original },
+            onBalancePending = { fail("Initialization failed") }
+        )
+        assertSame(original, runCatching { flow.startOrResume(order()) }.exceptionOrNull())
+        assertEquals(1, starts)
+    }
 }
