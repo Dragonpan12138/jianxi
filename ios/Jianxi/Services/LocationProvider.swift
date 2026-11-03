@@ -40,7 +40,11 @@ final class LocationProvider: NSObject, CLLocationManagerDelegate {
         }
     }
 
-    func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
+    nonisolated func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
+        Task { @MainActor [weak self] in self?.authorizationChanged() }
+    }
+
+    private func authorizationChanged() {
         guard continuation != nil else { return }
         switch manager.authorizationStatus {
         case .authorizedAlways, .authorizedWhenInUse: manager.requestLocation()
@@ -49,7 +53,11 @@ final class LocationProvider: NSObject, CLLocationManagerDelegate {
         }
     }
 
-    func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
+    nonisolated func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
+        Task { @MainActor [weak self] in self?.receivedLocations(locations) }
+    }
+
+    private func receivedLocations(_ locations: [CLLocation]) {
         guard let location = locations.last(where: isUsable) else {
             if manager.accuracyAuthorization == .reducedAccuracy {
                 finish(.failure(ClientError(message: "请在系统设置中允许精确位置后重试")))
@@ -61,7 +69,11 @@ final class LocationProvider: NSObject, CLLocationManagerDelegate {
         finish(.success(LocationFix(latitude: location.coordinate.latitude, longitude: location.coordinate.longitude)))
     }
 
-    func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
+    nonisolated func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
+        Task { @MainActor [weak self] in self?.locationFailed() }
+    }
+
+    private func locationFailed() {
         finish(.failure(ClientError(message: "暂时无法获取位置，请稍后重试")))
     }
 
