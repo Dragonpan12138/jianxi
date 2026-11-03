@@ -29,7 +29,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install project tools
-        run: brew install xcodegen cocoapods
+        run: |
+          brew install xcodegen
+          pod --version
       - name: Generate workspace
         run: |
           xcodegen generate --spec project.yml
@@ -68,7 +70,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install project tools
-        run: brew install xcodegen cocoapods
+        run: |
+          brew install xcodegen
+          pod --version
       - name: Generate workspace
         run: |
           xcodegen generate --spec project.yml
@@ -127,7 +131,9 @@ jobs:
             fi
           done
       - name: Install project tools
-        run: brew install xcodegen cocoapods
+        run: |
+          brew install xcodegen
+          pod --version
       - name: Generate workspace
         run: |
           xcodegen generate --spec project.yml
