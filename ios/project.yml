@@ -1,0 +1,59 @@
+name: Jianxi
+options:
+  deploymentTarget:
+    iOS: "16.0"
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+targets:
+  Jianxi:
+    type: application
+    platform: iOS
+    sources:
+      - path: Jianxi
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.rain.laundry.ios
+        TARGETED_DEVICE_FAMILY: "1,2"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        CODE_SIGN_STYLE: Automatic
+        SUPPORTS_MACCATALYST: NO
+        MARKETING_VERSION: 0.1.0
+        CURRENT_PROJECT_VERSION: 1
+    info:
+      path: Jianxi/Info.plist
+      properties:
+        CFBundleDisplayName: 简洗
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        ITSAppUsesNonExemptEncryption: false
+        NSCameraUsageDescription: 扫描洗衣机上的二维码以识别设备。
+        NSLocationWhenInUseUsageDescription: 创建订单时确认洗衣机所在位置。
+        LSApplicationQueriesSchemes:
+          - alipay
+          - alipays
+        CFBundleURLTypes:
+          - CFBundleURLName: dev.rain.laundry.ios.alipay
+            CFBundleURLSchemes:
+              - jianxi-alipay
+  JianxiTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: JianxiTests
+    dependencies:
+      - target: Jianxi
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.rain.laundry.ios.tests
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Jianxi.app/Jianxi"
+        BUNDLE_LOADER: "$(TEST_HOST)"
+schemes:
+  Jianxi:
+    build:
+      targets:
+        Jianxi: all
+    test:
+      targets:
+        - JianxiTests

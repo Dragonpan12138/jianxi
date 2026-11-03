@@ -11,3 +11,7 @@ artifacts/
 *.log
 *.apk
 .DS_Store
+ios/Jianxi.xcodeproj/
+ios/Jianxi.xcworkspace/
+ios/Pods/
+ios/.symlinks/
